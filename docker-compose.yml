@@ -4,16 +4,15 @@ x-common-volumes: &common-volumes
 services:
   webui:
     build:
-      context: .
+      context: ./webui-react
       dockerfile: Dockerfile
     container_name: "moneyprinterturbo-webui"
     ports:
-      - "8501:8501"
-    command: [ "streamlit", "run", "./webui/Main.py","--browser.serverAddress=127.0.0.1","--server.enableCORS=True","--browser.gatherUsageStats=False" ]
-    environment:
-      - HF_TOKEN=${HF_TOKEN:-}
-    volumes: *common-volumes
+      - "5173:80"
+    depends_on:
+      - api
     restart: always
+
   api:
     build:
       context: .

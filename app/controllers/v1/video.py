@@ -312,6 +312,18 @@ async def stream_video(request: Request, file_path: str):
     return response
 
 
+@router.get("/fonts", summary="List available font files")
+def get_fonts_list(request: Request):
+    fonts_dir = os.path.join(utils.root_dir(), "resource", "fonts")
+    font_extensions = (".ttf", ".ttc", ".otf", ".woff", ".woff2")
+    fonts = []
+    if os.path.isdir(fonts_dir):
+        for f in sorted(os.listdir(fonts_dir)):
+            if f.lower().endswith(font_extensions):
+                fonts.append({"name": f})
+    return utils.get_response(200, {"fonts": fonts})
+
+
 @router.get("/download/{file_path:path}")
 async def download_video(_: Request, file_path: str):
     """
