@@ -8,7 +8,15 @@ from xml.sax.saxutils import unescape
 import edge_tts
 import requests
 from edge_tts import SubMaker, submaker
-from edge_tts.submaker import mktimestamp
+
+
+def mktimestamp(time_unit: int) -> str:
+    """Convert 100-nanosecond intervals to HH:MM:SS.mmm (removed in edge-tts v7)."""
+    hour = int(time_unit / 1e7 / 3600)
+    minute = int(time_unit / 1e7 / 60) % 60
+    seconds = int(time_unit / 1e7) % 60
+    mseconds = int(time_unit / 1e4) % 1000
+    return f"{hour:02d}:{minute:02d}:{seconds:02d}.{mseconds:03d}"
 from loguru import logger
 from moviepy.video.tools import subtitles
 from moviepy.audio.io.AudioFileClip import AudioFileClip
@@ -1116,6 +1124,126 @@ def is_gemini_voice(voice_name: str):
     return voice_name.startswith("gemini:")
 
 
+def is_custom_tts_voice(voice_name: str):
+    """Check if the voice is a Custom TTS voice."""
+    return voice_name.startswith("custom-tts:")
+
+
+def get_custom_tts_voices(base_url: str = "http://192.168.1.19:7860") -> list[str]:
+    """
+    Fetch available voices from the Custom TTS API.
+
+    Returns:
+        List of voice names prefixed with "custom-tts:", e.g. ["custom-tts:casual_female", ...]
+    """
+    try:
+        response = requests.get(f"{base_url}/v1/audio/voices", timeout=10)
+        if response.status_code == 200:
+            data = response.json()
+            voices = data.get("voices", []) + data.get("uploaded_voices", [])
+            return [f"custom-tts:{v}" for v in voices]
+    except Exception as e:
+        logger.warning(f"Failed to fetch custom TTS voices from {base_url}: {e}")
+
+    # Fallback to known preset voices
+    return [
+        "custom-tts:casual_female",
+        "custom-tts:casual_male",
+        "custom-tts:cheerful_female",
+        "custom-tts:neutral_female",
+        "custom-tts:neutral_male",
+        "custom-tts:ar_male",
+        "custom-tts:de_female",
+        "custom-tts:de_male",
+        "custom-tts:es_female",
+        "custom-tts:es_male",
+        "custom-tts:fr_female",
+        "custom-tts:fr_male",
+        "custom-tts:hi_female",
+        "custom-tts:hi_male",
+        "custom-tts:it_female",
+        "custom-tts:it_male",
+        "custom-tts:nl_female",
+        "custom-tts:nl_male",
+        "custom-tts:pt_female",
+        "custom-tts:pt_male",
+    ]
+
+
+def custom_tts(
+    text: str,
+    voice_name: str,
+    voice_file: str,
+    base_url: str = "http://192.168.1.19:7860",
+) -> Union[SubMaker, None]:
+    """
+    Generate speech using the Custom TTS API (Voxtral, OpenAI-compatible).
+
+    Args:
+        text: Text to synthesise.
+        voice_name: Voice identifier, e.g. "casual_female".
+        voice_file: Output audio file path.
+        base_url: Base URL of the Custom TTS server.
+
+    Returns:
+        SubMaker object or None on failure.
+    """
+    text = text.strip()
+    url = f"{base_url}/v1/audio/speech"
+    payload = {
+        "model": "mistralai/Voxtral-4B-TTS-2603",
+        "input": text,
+        "voice": voice_name,
+        "response_format": "mp3",
+    }
+
+    for i in range(3):
+        try:
+            logger.info(f"custom tts start, voice: {voice_name}, try: {i + 1}")
+            response = requests.post(url, json=payload, timeout=300)
+            if response.status_code == 200:
+                with open(voice_file, "wb") as f:
+                    f.write(response.content)
+
+                sub_maker = SubMaker()
+                try:
+                    from moviepy import AudioFileClip
+
+                    audio_clip = AudioFileClip(voice_file)
+                    audio_duration = audio_clip.duration
+                    audio_clip.close()
+                    audio_duration_100ns = int(audio_duration * 10_000_000)
+
+                    sentences = utils.split_string_by_punctuations(text)
+                    if sentences:
+                        total_chars = sum(len(s) for s in sentences)
+                        char_duration = audio_duration_100ns / total_chars if total_chars > 0 else 0
+                        current_offset = 0
+                        for sentence in sentences:
+                            if not sentence.strip():
+                                continue
+                            sentence_duration = int(len(sentence) * char_duration)
+                            sub_maker.subs.append(sentence)
+                            sub_maker.offset.append((current_offset, current_offset + sentence_duration))
+                            current_offset += sentence_duration
+                    else:
+                        sub_maker.subs = [text]
+                        sub_maker.offset = [(0, audio_duration_100ns)]
+                except Exception as e:
+                    logger.warning(f"custom tts subtitle creation failed: {e}")
+                    sub_maker.subs = [text]
+                    sub_maker.offset = [(0, 10_000_000)]
+
+                logger.success(f"custom tts succeeded: {voice_file}")
+                return sub_maker
+            else:
+                logger.error(f"custom tts failed with status {response.status_code}: {response.text}")
+        except Exception as e:
+            logger.error(f"custom tts error: {e}")
+
+    return None
+
+
 def tts(
     text: str,
     voice_name: str,
@@ -1154,6 +1282,14 @@ def tts(
         else:
             logger.error(f"Invalid gemini voice name format: {voice_name}")
             return None
+    elif is_custom_tts_voice(voice_name):
+        # Format: custom-tts:voice_name
+        parts = voice_name.split(":", 1)
+        if len(parts) == 2:
+            return custom_tts(text, parts[1], voice_file)
+        else:
+            logger.error(f"Invalid custom tts voice name format: {voice_name}")
+            return None
     return azure_tts_v1(text, voice_name, voice_rate, voice_file)
 
 
@@ -1184,14 +1320,18 @@ def azure_tts_v1(
                     async for chunk in communicate.stream():
                         if chunk["type"] == "audio":
                             file.write(chunk["data"])
-                        elif chunk["type"] == "WordBoundary":
-                            sub_maker.create_sub(
-                                (chunk["offset"], chunk["duration"]), chunk["text"]
-                            )
+                        elif chunk["type"] in ("WordBoundary", "SentenceBoundary"):
+                            sub_maker.feed(chunk)
+                # Populate legacy .subs / .offset attributes for downstream compatibility
+                sub_maker.subs = [cue.content for cue in sub_maker.cues]
+                sub_maker.offset = [
+                    (int(cue.start.total_seconds() * 1e7), int(cue.end.total_seconds() * 1e7))
+                    for cue in sub_maker.cues
+                ]
                 return sub_maker
 
             sub_maker = asyncio.run(_do())
-            if not sub_maker or not sub_maker.subs:
+            if not sub_maker or not sub_maker.cues:
                 logger.warning("failed, sub_maker is None or sub_maker.subs is None")
                 continue
 
@@ -1543,11 +1683,8 @@ def gemini_tts(
         # 将音频长度转换为100纳秒单位（与edge_tts兼容）
         audio_duration_100ns = int(audio_duration * 10000000)
         
-        # 使用create_sub方法正确创建字幕项
-        sub_maker.create_sub(
-            (0, audio_duration_100ns), 
-            text
-        )
+        sub_maker.subs = [text]
+        sub_maker.offset = [(0, audio_duration_100ns)]
         
         return sub_maker
         
@@ -1665,9 +1802,11 @@ def _get_audio_duration_from_submaker(sub_maker: submaker.SubMaker):
     """
     获取音频时长
     """
-    if not sub_maker.offset:
-        return 0.0
-    return sub_maker.offset[-1][1] / 10000000
+    if hasattr(sub_maker, "offset") and sub_maker.offset:
+        return sub_maker.offset[-1][1] / 10000000
+    if hasattr(sub_maker, "cues") and sub_maker.cues:
+        return sub_maker.cues[-1].end.total_seconds()
+    return 0.0
 
 def _get_audio_duration_from_mp3(mp3_file: str) -> float:
     """

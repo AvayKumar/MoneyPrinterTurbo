@@ -646,14 +646,15 @@ with middle_panel:
 
         # 添加TTS服务器选择下拉框
         tts_servers = [
+            ("custom-tts", "Custom TTS"),
             ("azure-tts-v1", "Azure TTS V1"),
             ("azure-tts-v2", "Azure TTS V2"),
             ("siliconflow", "SiliconFlow TTS"),
             ("gemini-tts", "Google Gemini TTS"),
         ]
 
-        # 获取保存的TTS服务器，默认为v1
-        saved_tts_server = config.ui.get("tts_server", "azure-tts-v1")
+        # 获取保存的TTS服务器，默认为custom-tts
+        saved_tts_server = config.ui.get("tts_server", "custom-tts")
         saved_tts_server_index = 0
         for i, (server_value, _) in enumerate(tts_servers):
             if server_value == saved_tts_server:
@@ -673,7 +674,9 @@ with middle_panel:
         # 根据选择的TTS服务器获取声音列表
         filtered_voices = []
 
-        if selected_tts_server == "siliconflow":
+        if selected_tts_server == "custom-tts":
+            filtered_voices = voice.get_custom_tts_voices()
+        elif selected_tts_server == "siliconflow":
             # 获取硅基流动的声音列表
             filtered_voices = voice.get_siliconflow_voices()
         elif selected_tts_server == "gemini-tts":
@@ -771,7 +774,7 @@ with middle_panel:
                         voice_volume=params.voice_volume,
                     )
 
-                if sub_maker and os.path.exists(audio_file):
+                if sub_maker is not None and os.path.exists(audio_file):
                     st.audio(audio_file, format="audio/mp3")
                     if os.path.exists(audio_file):
                         os.remove(audio_file)

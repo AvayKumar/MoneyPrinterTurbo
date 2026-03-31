@@ -3,6 +3,8 @@ import os.path
 import re
 from timeit import default_timer as timer
 
+import requests
+
 try:
     from faster_whisper import WhisperModel
 except ImportError:
@@ -17,8 +19,73 @@ device = config.whisper.get("device", "cpu")
 compute_type = config.whisper.get("compute_type", "int8")
 model = None
 
+_CUSTOM_STT_BASE_URL = "http://192.168.1.19:7861"
+
+
+def _create_with_custom_stt(audio_file: str, subtitle_file: str) -> bool:
+    """
+    Try to generate subtitles using the Custom STT API.
+    Returns True on success, False on failure (caller should fall back to Whisper).
+    """
+    url = f"{_CUSTOM_STT_BASE_URL}/v1/audio/transcriptions"
+    logger.info(f"trying custom STT API: {url}")
+    try:
+        with open(audio_file, "rb") as f:
+            response = requests.post(
+                url,
+                files={"file": (os.path.basename(audio_file), f)},
+                data={"response_format": "verbose_json", "timestamp_granularities": "segment"},
+                timeout=300,
+            )
+
+        if response.status_code != 200:
+            logger.warning(f"custom STT API returned {response.status_code}: {response.text}")
+            return False
+
+        data = response.json()
+        segments = data.get("segments", [])
+        if not segments:
+            logger.warning("custom STT API returned no segments")
+            return False
+
+        logger.info(f"custom STT detected language: '{data.get('language', 'unknown')}'")
+
+        idx = 1
+        lines = []
+        for seg in segments:
+            text = seg.get("text", "").strip()
+            if not text:
+                continue
+            lines.append(utils.text_to_srt(idx, text, seg["start"], seg["end"]))
+            idx += 1
+
+        sub = "\n".join(lines) + "\n"
+        with open(subtitle_file, "w", encoding="utf-8") as f:
+            f.write(sub)
+        logger.info(f"subtitle file created via custom STT: {subtitle_file}")
+        return True
+
+    except Exception as e:
+        logger.warning(f"custom STT API failed: {e}")
+        return False
+
 
 def create(audio_file, subtitle_file: str = ""):
+    if not subtitle_file:
+        subtitle_file = f"{audio_file}.srt"
+
+    logger.info(f"start subtitle generation, output file: {subtitle_file}")
+
+    # Try Custom STT API first
+    if _create_with_custom_stt(audio_file, subtitle_file):
+        return
+
+    # Fall back to local Whisper
+    logger.info("falling back to local Whisper for subtitle generation")
+    _create_with_whisper(audio_file, subtitle_file)
+
+
+def _create_with_whisper(audio_file: str, subtitle_file: str):
     global model
     if WhisperModel is None:
         logger.warning("faster_whisper not available, skipping whisper subtitle generation")
@@ -46,10 +113,6 @@ def create(audio_file, subtitle_file: str = ""):
                 f"********************************************\n\n"
             )
             return None
-
-    logger.info(f"start, output file: {subtitle_file}")
-    if not subtitle_file:
-        subtitle_file = f"{audio_file}.srt"
 
     segments, info = model.transcribe(
         audio_file,
@@ -139,7 +202,7 @@ def create(audio_file, subtitle_file: str = ""):
     sub = "\n".join(lines) + "\n"
     with open(subtitle_file, "w", encoding="utf-8") as f:
         f.write(sub)
-    logger.info(f"subtitle file created: {subtitle_file}")
+    logger.info(f"subtitle file created via whisper: {subtitle_file}")
 
 
 def file_to_subtitles(filename):
