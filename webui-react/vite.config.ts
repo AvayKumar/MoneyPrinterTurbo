@@ -18,6 +18,16 @@ export default defineConfig({
         changeOrigin: true,
         rewrite: (p) => p.replace(/^\/api/, '/api/v1'),
       },
+      '/tti': {
+        target: 'http://192.168.1.19:7082',
+        changeOrigin: true,
+        rewrite: (p) => p.replace(/^\/tti/, ''),
+      },
+      '/ttv': {
+        target: 'http://192.168.1.19:7083',
+        changeOrigin: true,
+        rewrite: (p) => p.replace(/^\/ttv/, ''),
+      },
     },
   },
 })

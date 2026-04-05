@@ -1,8 +1,11 @@
 import { useState } from 'react'
 import type { FormState, LlmConfig } from '@/types'
 import { defaultFormState, defaultLlmConfig } from '@/types'
+import { unloadOllamaModel } from '@/api/llm'
+import { unloadTtiModel, unloadVideoModel } from '@/api/tti'
 import SettingsPanel from '@/components/SettingsPanel'
 import ScriptSection from '@/components/ScriptSection'
+import VideoGenerationSection from '@/components/VideoGenerationSection'
 import VideoSection from '@/components/VideoSection'
 import AudioSection from '@/components/AudioSection'
 import SubtitleSection from '@/components/SubtitleSection'
@@ -13,6 +16,36 @@ export default function Home() {
   const [llmConfig, setLlmConfig] = useState<LlmConfig>(defaultLlmConfig)
   const [pexelsKeys, setPexelsKeys] = useState('')
   const [pixabayKeys, setPixabayKeys] = useState('')
+  const [unloadingModel, setUnloadingModel] = useState(false)
+  const [unloadingTti, setUnloadingTti] = useState(false)
+  const [unloadingVideo, setUnloadingVideo] = useState(false)
+
+  async function handleUnloadModel() {
+    setUnloadingModel(true)
+    try {
+      await unloadOllamaModel()
+    } finally {
+      setUnloadingModel(false)
+    }
+  }
+
+  async function handleUnloadTti() {
+    setUnloadingTti(true)
+    try {
+      await unloadTtiModel()
+    } finally {
+      setUnloadingTti(false)
+    }
+  }
+
+  async function handleUnloadVideo() {
+    setUnloadingVideo(true)
+    try {
+      await unloadVideoModel()
+    } finally {
+      setUnloadingVideo(false)
+    }
+  }
 
   function onChange(patch: Partial<FormState>) {
     setForm((prev) => ({ ...prev, ...patch }))
@@ -32,9 +65,34 @@ export default function Home() {
               <p className="text-xs text-[#4a5568]">AI-powered short video generator</p>
             </div>
           </div>
-          <div className="text-xs text-[#4a5568]">
-            API:{' '}
-            <span className="text-[#68d391]">http://localhost:8080</span>
+          <div className="flex items-center gap-4">
+            {llmConfig.provider === 'ollama' && (
+              <button
+                onClick={handleUnloadModel}
+                disabled={unloadingModel}
+                className="text-xs px-3 py-1.5 rounded border border-[#4a3a2a] bg-[#2a1a0a] text-[#f6ad55] hover:bg-[#3a2a1a] disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+              >
+                {unloadingModel ? '⏳ Unloading…' : `⏏ Unload ${llmConfig.model_name || 'Model'}`}
+              </button>
+            )}
+            <button
+              onClick={handleUnloadTti}
+              disabled={unloadingTti}
+              className="text-xs px-3 py-1.5 rounded border border-[#2a3a4a] bg-[#0a1a2a] text-[#63b3ed] hover:bg-[#1a2a3a] disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+            >
+              {unloadingTti ? '⏳ Unloading…' : '⏏ Unload Image Model'}
+            </button>
+            <button
+              onClick={handleUnloadVideo}
+              disabled={unloadingVideo}
+              className="text-xs px-3 py-1.5 rounded border border-[#2a4a3a] bg-[#0a2a1a] text-[#68d391] hover:bg-[#1a3a2a] disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+            >
+              {unloadingVideo ? '⏳ Unloading…' : '⏏ Unload Video Model'}
+            </button>
+            <div className="text-xs text-[#4a5568]">
+              API:{' '}
+              <span className="text-[#68d391]">http://localhost:8080</span>
+            </div>
           </div>
         </div>
       </header>
@@ -50,19 +108,23 @@ export default function Home() {
           onPixabayChange={setPixabayKeys}
         />
 
-        {/* 3-column layout */}
+        {/* Row 1: Script (1 col) | Video Generation / Chunks (2 cols) */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-          {/* Left: Script */}
           <ScriptSection form={form} onChange={onChange} />
+          <div className="lg:col-span-2">
+            <VideoGenerationSection form={form} onChange={onChange} />
+          </div>
+        </div>
 
-          {/* Center: Video + Audio */}
+        {/* Row 2: Video + Audio (1 col) | Subtitles (2 cols) */}
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
           <div className="flex flex-col gap-4">
             <VideoSection form={form} onChange={onChange} />
             <AudioSection form={form} onChange={onChange} />
           </div>
-
-          {/* Right: Subtitles */}
-          <SubtitleSection form={form} onChange={onChange} />
+          <div className="lg:col-span-2">
+            <SubtitleSection form={form} onChange={onChange} />
+          </div>
         </div>
 
         {/* Generation */}

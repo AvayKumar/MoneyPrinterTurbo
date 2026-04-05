@@ -274,6 +274,106 @@ class VideoTermsResponse(BaseResponse):
         }
 
 
+class ScriptChunk(BaseModel):
+    text: str
+    image_prompt: str
+    video_prompt: str = ""
+
+
+class VideoPromptRequest(BaseModel):
+    chunk_text: str
+    image_prompt: str
+    character_names: Optional[List[str]] = None
+
+
+class VideoPromptResponse(BaseResponse):
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "status": 200,
+                "message": "success",
+                "data": {"video_prompt": "Medium shot slowly zooms in. Alice steps forward and raises her hand."},
+            },
+        }
+
+
+class ScriptChunksParams:
+    """
+    {
+      "video_script": "...",
+      "language": "",
+      "image_style_prompt": "",
+      "character_names": []
+    }
+    """
+
+    video_script: Optional[str] = ""
+    language: Optional[str] = ""
+    image_style_prompt: Optional[str] = ""
+    character_names: Optional[List[str]] = None
+
+
+class ScriptChunksRequest(ScriptChunksParams, BaseModel):
+    pass
+
+
+class ScriptChunksResponse(BaseResponse):
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "status": 200,
+                "message": "success",
+                "data": {
+                    "chunks": [
+                        {
+                            "text": "Spring flowers bloom across the valley.",
+                            "image_prompt": "Wide shot of colorful spring flowers blooming in a valley, golden hour lighting",
+                        }
+                    ]
+                },
+            },
+        }
+
+
+class Character(BaseModel):
+    name: str
+    description: str
+
+
+class CharactersParams:
+    """
+    {
+      "video_script": "...",
+      "image_style_prompt": ""
+    }
+    """
+
+    video_script: Optional[str] = ""
+    image_style_prompt: Optional[str] = ""
+
+
+class CharactersRequest(CharactersParams, BaseModel):
+    pass
+
+
+class CharactersResponse(BaseResponse):
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "status": 200,
+                "message": "success",
+                "data": {
+                    "characters": [
+                        {
+                            "name": "Alex",
+                            "description": "Full body character reference on white background: Young adult male, athletic build, short dark hair, green eyes, wearing a worn leather jacket and dark jeans, determined expression, neutral standing pose.",
+                        }
+                    ]
+                },
+            },
+        }
+
+
 class BgmRetrieveResponse(BaseResponse):
     class Config:
         json_schema_extra = {

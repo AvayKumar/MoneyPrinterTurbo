@@ -307,8 +307,9 @@ def _generate_response(prompt: str) -> str:
                     base_url=base_url,
                 )
 
+            extra = {"extra_body": {"keep_alive": 30}} if llm_provider == "ollama" else {}
             response = client.chat.completions.create(
-                model=model_name, messages=[{"role": "user", "content": prompt}]
+                model=model_name, messages=[{"role": "user", "content": prompt}], **extra
             )
             if response:
                 if isinstance(response, ChatCompletion):
@@ -464,6 +465,217 @@ Please note that you must use English for generating video search terms; Chinese
 
     logger.success(f"completed: \n{search_terms}")
     return search_terms
+
+
+def generate_video_prompt(chunk_text: str, image_prompt: str, character_names: list[str] = []) -> str:
+    """Generate a video animation prompt for a single script chunk."""
+    characters_in_scene = ", ".join(character_names) if character_names else "none"
+    video_prompt_input = f"""You are a cinematographer and motion director. Given the scene details below, write a concise video animation prompt for this scene.
+
+Image description: "{image_prompt}"
+Script segment: "{chunk_text}"
+Characters in scene: {characters_in_scene}
+
+Your prompt must cover ALL of the following in order:
+1. Camera movement (pan, zoom, tilt, or static)
+2. For each character present: what they physically do and what they say or express based on `Script segment` (in sequence)
+3. Atmosphere, mood, background sounds and timing 
+
+Note: Don't add voice over or clip duration in the response
+
+Return ONLY 2-4 sentences describing the animation. No markdown, no bullet points, no explanation.
+Example: "Medium shot slowly zooms in. Alice steps forward and raises her hand, saying 'We have to go now.' Bob turns away silently, fists clenched. Rain begins to fall as the camera pulls back to reveal the empty street."
+"""
+    for i in range(_max_retries):
+        try:
+            result = _generate_response(video_prompt_input).strip()
+            if result:
+                return result
+        except Exception as e:
+            logger.warning(f"generate_video_prompt chunk '{chunk_text[:30]}' attempt {i + 1} failed: {e}")
+    return ""
+
+
+def generate_script_chunks(video_script: str, language: str = "", image_style_prompt: str = "", character_names: list[str] = []) -> list[dict]:
+    """
+    Phase 1: split script into ~2-3 second text chunks via one LLM call.
+    Phase 2: for each chunk, generate an image prompt in a separate LLM call.
+    Phase 3: identify which known characters appear in each chunk.
+    Returns: list of {"text": str, "image_prompt": str, "character_names": list[str]}
+    """
+    # --- Phase 1: split into text chunks ---
+    split_prompt = f"""You are a video script analyzer. Split the following script into short segments that each take approximately 2-3 seconds to speak naturally.
+
+Script:
+{video_script}
+
+Return ONLY a valid JSON array of strings, where each string is one spoken segment:
+["segment one text here", "segment two text here", ...]
+
+Rules:
+1. Each segment should be 8-15 words (approximately 2-3 seconds of speech at a natural pace)
+2. Preserve the original wording exactly — do not paraphrase
+3. Together all segments must cover the full script without gaps or repetition
+4. Return ONLY the JSON array, no markdown, no explanation
+"""
+    text_chunks = []
+    for i in range(_max_retries):
+        try:
+            result = _generate_response(split_prompt).strip()
+            if result.startswith("```"):
+                result = result.split("```")[1]
+                if result.startswith("json"):
+                    result = result[4:]
+            parsed = json.loads(result.strip())
+            if isinstance(parsed, list) and all(isinstance(c, str) for c in parsed):
+                text_chunks = parsed
+                break
+        except Exception as e:
+            logger.warning(f"generate_script_chunks phase1 attempt {i + 1} failed: {e}")
+
+    if not text_chunks:
+        return []
+
+    # --- Phase 2: generate image prompt for each chunk in a loop ---
+    chunks = []
+    for chunk_text in text_chunks:
+        image_prompt = ""
+        style_suffix = f"\nVisual style requirement: {image_style_prompt}" if image_style_prompt else ""
+        prompt_for_chunk = f"""You are a visual director. Given this short spoken script segment, write a vivid image/scene description suitable for stock video or AI image generation.
+
+Script segment: "{chunk_text}"
+Full script context: "{video_script}"{style_suffix}
+
+Return ONLY the image description as a single sentence or short phrase. No markdown, no explanation.
+"""
+        for i in range(_max_retries):
+            try:
+                image_prompt = _generate_response(prompt_for_chunk).strip()
+                if image_prompt:
+                    break
+            except Exception as e:
+                logger.warning(
+                    f"generate_script_chunks phase2 chunk '{chunk_text[:30]}' attempt {i + 1} failed: {e}"
+                )
+
+        # --- Phase 3: identify which known characters appear in this chunk ---
+        scene_characters: list[str] = []
+        if character_names:
+            names_list = ", ".join(f'"{n}"' for n in character_names)
+            char_prompt = f"""From this list of characters: [{names_list}], which ones appear or are referenced in the following scene from Script?
+
+Script:
+{video_script}
+
+Scene: "{chunk_text}"
+
+Return ONLY a valid JSON array of the matching character names. If none match, return [].
+Example: ["Alice (Lead)", "Bob"]
+Return ONLY the JSON array, no markdown, no explanation.
+"""
+            for i in range(_max_retries):
+                try:
+                    result = _generate_response(char_prompt).strip()
+                    if result.startswith("```"):
+                        result = result.split("```")[1]
+                        if result.startswith("json"):
+                            result = result[4:]
+                    parsed = json.loads(result.strip())
+                    if isinstance(parsed, list) and all(isinstance(n, str) for n in parsed):
+                        scene_characters = [n for n in parsed if n in character_names]
+                        break
+                except Exception as e:
+                    logger.warning(f"generate_script_chunks phase3 chunk '{chunk_text[:30]}' attempt {i + 1} failed: {e}")
+
+        chunks.append({"text": chunk_text, "image_prompt": image_prompt, "character_names": scene_characters})
+
+    logger.success(f"generated {len(chunks)} script chunks")
+    return chunks
+
+
+def unload_ollama_model() -> dict:
+    """Send keep_alive=0 to Ollama to immediately unload the current model from memory."""
+    base_url = config.app.get("ollama_base_url", "") or "http://localhost:11434/v1"
+    native_base = base_url.rstrip("/")
+    if native_base.endswith("/v1"):
+        native_base = native_base[:-3]
+    model_name = config.app.get("ollama_model_name", "")
+    response = requests.post(
+        f"{native_base}/api/chat",
+        json={"model": model_name, "keep_alive": 0},
+        timeout=10,
+    )
+    response.raise_for_status()
+    logger.success(f"ollama model '{model_name}' unloaded")
+    return {"model": model_name}
+
+
+def generate_characters(video_script: str, image_style_prompt: str = "") -> list[dict]:
+    """
+    Phase 1: extract character names from the script in one LLM call.
+    Phase 2: for each character, generate a visual description in a separate LLM call.
+    Returns: list of {"name": str, "description": str}
+    """
+    # --- Phase 1: extract character names ---
+    names_prompt = f"""You are a script analyst. Identify all main characters mentioned or implied in the following script of there are no main characters return empty array.
+
+Script:
+{video_script}
+
+Return ONLY a valid JSON array of character name strings. Include only characters who play a meaningful role.
+Append " (Lead)" to the name of the single most central protagonist of the story.
+
+Example: ["Alice (Lead)", "The Old Man", "Robot Guard"]
+Return ONLY the JSON array, no markdown, no explanation.
+"""
+    character_names = []
+    for i in range(_max_retries):
+        try:
+            result = _generate_response(names_prompt).strip()
+            if result.startswith("```"):
+                result = result.split("```")[1]
+                if result.startswith("json"):
+                    result = result[4:]
+            parsed = json.loads(result.strip())
+            if isinstance(parsed, list) and all(isinstance(n, str) for n in parsed):
+                character_names = parsed
+                break
+        except Exception as e:
+            logger.warning(f"generate_characters phase1 attempt {i + 1} failed: {e}")
+
+    if not character_names:
+        return []
+
+    # --- Phase 2: generate description for each character individually ---
+    style_note = f"The visual style is: {image_style_prompt}. " if image_style_prompt else ""
+    characters = []
+    for name in character_names:
+        description = ""
+        desc_prompt = f"""You are a character designer. Write a detailed visual reference description for the character "{name}" from the following script.
+
+Script:
+{video_script}
+
+{style_note}The description will be used to generate a consistent character reference image on a plain white background.
+
+Rules:
+1. Describe only "{name}" — one character only
+2. Cover: age, build, hair, eyes, clothing, expression, pose
+3. Start the description with: 'Full body character reference on white background: '
+4. Return ONLY the description as plain text, no markdown, no explanation
+"""
+        for i in range(_max_retries):
+            try:
+                description = _generate_response(desc_prompt).strip()
+                if description:
+                    break
+            except Exception as e:
+                logger.warning(f"generate_characters phase2 '{name}' attempt {i + 1} failed: {e}")
+
+        characters.append({"name": name, "description": description})
+
+    logger.success(f"generated {len(characters)} characters")
+    return characters
 
 
 if __name__ == "__main__":

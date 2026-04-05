@@ -72,6 +72,39 @@ export interface VideoTermsRequest {
   amount?: number
 }
 
+export interface ScriptChunk {
+  text: string
+  image_prompt: string
+  video_prompt?: string
+  character_names?: string[]
+  image_url?: string
+  video_url?: string
+}
+
+export interface ScriptChunksRequest {
+  video_script: string
+  language?: string
+  image_style_prompt?: string
+  character_names?: string[]
+}
+
+export interface VideoPromptRequest {
+  chunk_text: string
+  image_prompt: string
+  character_names?: string[]
+}
+
+export interface Character {
+  name: string
+  description: string
+  image_url?: string
+}
+
+export interface CharactersRequest {
+  video_script: string
+  image_style_prompt?: string
+}
+
 export interface SubtitleRequest extends TaskVideoRequest {
   video_script: string
 }
@@ -116,6 +149,10 @@ export interface FontFile {
 export interface FormState extends TaskVideoRequest {
   // derived / UI-only
   tts_server: TtsServer
+  script_chunks: ScriptChunk[]
+  image_style: string
+  characters: Character[]
+  reference_strength: number
 }
 
 export const defaultFormState: FormState = {
@@ -144,6 +181,10 @@ export const defaultFormState: FormState = {
   stroke_color: '#000000',
   stroke_width: 1.5,
   tts_server: 'custom-tts',
+  script_chunks: [],
+  image_style: 'realistic',
+  characters: [],
+  reference_strength: 0.4,
 }
 
 // ─── LLM Providers ────────────────────────────────────────────────────────────
@@ -174,7 +215,7 @@ export interface LlmConfig {
 }
 
 export const defaultLlmConfig: LlmConfig = {
-  provider: 'openai',
+  provider: 'ollama',
   api_key: '',
   base_url: '',
   model_name: '',
