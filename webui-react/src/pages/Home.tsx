@@ -3,6 +3,7 @@ import type { FormState, LlmConfig } from '@/types'
 import { defaultFormState, defaultLlmConfig } from '@/types'
 import { unloadOllamaModel } from '@/api/llm'
 import { unloadTtiModel, unloadVideoModel } from '@/api/tti'
+import { unloadAudioModel } from '@/api/audio'
 import SettingsPanel from '@/components/SettingsPanel'
 import ScriptSection from '@/components/ScriptSection'
 import VideoGenerationSection from '@/components/VideoGenerationSection'
@@ -19,6 +20,7 @@ export default function Home() {
   const [unloadingModel, setUnloadingModel] = useState(false)
   const [unloadingTti, setUnloadingTti] = useState(false)
   const [unloadingVideo, setUnloadingVideo] = useState(false)
+  const [unloadingAudio, setUnloadingAudio] = useState(false)
 
   async function handleUnloadModel() {
     setUnloadingModel(true)
@@ -44,6 +46,15 @@ export default function Home() {
       await unloadVideoModel()
     } finally {
       setUnloadingVideo(false)
+    }
+  }
+
+  async function handleUnloadAudio() {
+    setUnloadingAudio(true)
+    try {
+      await unloadAudioModel()
+    } finally {
+      setUnloadingAudio(false)
     }
   }
 
@@ -88,6 +99,13 @@ export default function Home() {
               className="text-xs px-3 py-1.5 rounded border border-[#2a4a3a] bg-[#0a2a1a] text-[#68d391] hover:bg-[#1a3a2a] disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
             >
               {unloadingVideo ? '⏳ Unloading…' : '⏏ Unload Video Model'}
+            </button>
+            <button
+              onClick={handleUnloadAudio}
+              disabled={unloadingAudio}
+              className="text-xs px-3 py-1.5 rounded border border-[#3a2a4a] bg-[#1a0a2a] text-[#b794f4] hover:bg-[#2a1a3a] disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+            >
+              {unloadingAudio ? '⏳ Unloading…' : '⏏ Unload Audio Model'}
             </button>
             <div className="text-xs text-[#4a5568]">
               API:{' '}

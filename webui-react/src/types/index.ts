@@ -77,8 +77,12 @@ export interface ScriptChunk {
   image_prompt: string
   video_prompt?: string
   character_names?: string[]
-  image_url?: string
-  video_url?: string
+  image_urls?: string[]
+  image_index?: number
+  video_urls?: string[]
+  video_index?: number
+  audio_url?: string
+  audio_duration?: number
 }
 
 export interface ScriptChunksRequest {
@@ -97,7 +101,8 @@ export interface VideoPromptRequest {
 export interface Character {
   name: string
   description: string
-  image_url?: string
+  image_urls?: string[]
+  image_index?: number
 }
 
 export interface CharactersRequest {
@@ -166,7 +171,7 @@ export const defaultFormState: FormState = {
   video_count: 1,
   video_source: 'pexels',
   video_language: '',
-  voice_name: 'en-US-AndrewNeural',
+  voice_name: '',
   voice_volume: 1.0,
   voice_rate: 1.0,
   bgm_type: 'random',

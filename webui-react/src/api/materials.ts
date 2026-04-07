@@ -9,6 +9,11 @@ export interface FontItem {
   name: string
 }
 
+export interface VoiceItem {
+  value: string
+  label: string
+}
+
 // Backend wraps responses as: { status, message, data: { files: [...] } }
 export async function getMusics(): Promise<MusicItem[]> {
   const res = await client.get<{ data: { files: MusicItem[] } }>('/musics')
@@ -23,6 +28,27 @@ export async function getFonts(): Promise<FontItem[]> {
 export async function getVideoMaterials(): Promise<{ name: string; size: number; file: string }[]> {
   const res = await client.get<{ data: { files: { name: string; size: number; file: string }[] } }>('/video_materials')
   return res.data.data?.files ?? []
+}
+
+export async function getVoices(ttsServer: string): Promise<VoiceItem[]> {
+  const res = await client.get<{ data: { voices: VoiceItem[] } }>('/voices', {
+    params: { tts_server: ttsServer },
+  })
+  return res.data.data?.voices ?? []
+}
+
+export async function previewVoice(
+  voiceName: string,
+  voiceRate: number,
+  voiceVolume: number,
+  text?: string,
+): Promise<Blob> {
+  const res = await client.post(
+    '/preview-voice',
+    { voice_name: voiceName, voice_rate: voiceRate, voice_volume: voiceVolume, text },
+    { responseType: 'blob' },
+  )
+  return res.data
 }
 
 export async function uploadMusic(file: File): Promise<void> {

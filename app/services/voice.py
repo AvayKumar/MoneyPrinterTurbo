@@ -1129,7 +1129,7 @@ def is_custom_tts_voice(voice_name: str):
     return voice_name.startswith("custom-tts:")
 
 
-def get_custom_tts_voices(base_url: str = "http://192.168.1.19:7860") -> list[str]:
+def get_custom_tts_voices(base_url: str = "http://192.168.1.19:7080", timeout: int = 300) -> list[str]:
     """
     Fetch available voices from the Custom TTS API.
 
@@ -1137,7 +1137,7 @@ def get_custom_tts_voices(base_url: str = "http://192.168.1.19:7860") -> list[st
         List of voice names prefixed with "custom-tts:", e.g. ["custom-tts:casual_female", ...]
     """
     try:
-        response = requests.get(f"{base_url}/v1/audio/voices", timeout=10)
+        response = requests.get(f"{base_url}/v1/audio/voices", timeout=timeout)
         if response.status_code == 200:
             data = response.json()
             voices = data.get("voices", []) + data.get("uploaded_voices", [])
@@ -1174,7 +1174,7 @@ def custom_tts(
     text: str,
     voice_name: str,
     voice_file: str,
-    base_url: str = "http://192.168.1.19:7860",
+    base_url: str = "http://192.168.1.19:7080",
 ) -> Union[SubMaker, None]:
     """
     Generate speech using the Custom TTS API (Voxtral, OpenAI-compatible).

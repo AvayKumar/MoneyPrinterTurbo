@@ -2,7 +2,9 @@ import { useState } from 'react'
 import type { Character, FormState, ScriptChunk } from '@/types'
 import { generateScriptChunks, generateCharacters, regenerateVideoPrompt } from '@/api/llm'
 import { generateImage, generateImageWithReferences, generateVideo } from '@/api/tti'
+import { generateChunkAudio } from '@/api/audio'
 import { Card, CardHeader, FormRow, Textarea, Select, Button } from './ui'
+import MediaCarousel from './MediaCarousel'
 
 const IMAGE_STYLES = [
   { label: 'Realistic',              value: 'realistic',   prompt: 'Photorealistic, cinematic quality, natural lighting, high detail photography' },
@@ -51,8 +53,10 @@ export default function VideoGenerationSection({ form, onChange }: Props) {
   const [chunkVideoLoading, setChunkVideoLoading] = useState<Record<number, boolean>>({})
   const [chunkVideoPromptLoading, setChunkVideoPromptLoading] = useState<Record<number, boolean>>({})
   const [charImgLoading, setCharImgLoading] = useState<Record<number, boolean>>({})
+  const [chunkAudioLoading, setChunkAudioLoading] = useState<Record<number, boolean>>({})
   const [genAllChunksImgLoading, setGenAllChunksImgLoading] = useState(false)
   const [genAllVideoPromptsLoading, setGenAllVideoPromptsLoading] = useState(false)
+  const [genAllAudioLoading, setGenAllAudioLoading] = useState(false)
   const [genAllCharsImgLoading, setGenAllCharsImgLoading] = useState(false)
   const [lightbox, setLightbox] = useState<{ src: string; alt: string } | null>(null)
   const [charactersChecked, setCharactersChecked] = useState(false)
@@ -70,7 +74,10 @@ export default function VideoGenerationSection({ form, onChange }: Props) {
       return 0
     })
     return names
-      .map((name) => form.characters?.find((c) => c.name === name)?.image_url)
+      .map((name) => {
+        const char = form.characters?.find((c) => c.name === name)
+        return char?.image_urls?.[char.image_index ?? 0]
+      })
       .filter((url): url is string => Boolean(url))
   }
 
@@ -138,16 +145,20 @@ export default function VideoGenerationSection({ form, onChange }: Props) {
     onChange({ script_chunks: updated })
   }
 
-  async function handleGenerateChunkVideo(index: number) {
+  async function handleGenerateChunkVideo(index: number, regenerate = false) {
     const chunk = form.script_chunks[index]
-    if (!chunk?.image_url || !chunk?.video_prompt) return
+    const imageUrl = chunk?.image_urls?.[chunk.image_index ?? 0]
+    if (!imageUrl || !chunk?.video_prompt) return
     setError(null)
     setChunkVideoLoading((prev) => ({ ...prev, [index]: true }))
     try {
-      const url = await generateVideo(chunk.video_prompt, chunk.image_url, form.video_aspect)
-      const updated = (form.script_chunks ?? []).map((c, i) =>
-        i === index ? { ...c, video_url: url } : c
-      )
+      const url = await generateVideo(chunk.video_prompt, imageUrl, form.video_aspect)
+      const updated = (form.script_chunks ?? []).map((c, i) => {
+        if (i !== index) return c
+        const existing = regenerate ? [] : (c.video_urls ?? [])
+        const video_urls = [...existing, url]
+        return { ...c, video_urls, video_index: video_urls.length - 1 }
+      })
       onChange({ script_chunks: updated })
     } catch (e) {
       setError((e as Error).message)
@@ -198,7 +209,7 @@ export default function VideoGenerationSection({ form, onChange }: Props) {
     onChange({ script_chunks: updated })
   }
 
-  async function handleGenerateChunkImage(index: number) {
+  async function handleGenerateChunkImage(index: number, regenerate = false) {
     const chunk = form.script_chunks[index]
     if (!chunk?.image_prompt) return
     setError(null)
@@ -209,9 +220,12 @@ export default function VideoGenerationSection({ form, onChange }: Props) {
       const url = refs.length > 0
         ? await generateImageWithReferences(prompt, refs, form.video_aspect, form.reference_strength ?? 0.4)
         : await generateImage(prompt, form.video_aspect)
-      const updated = (form.script_chunks ?? []).map((c, i) =>
-        i === index ? { ...c, image_url: url } : c
-      )
+      const updated = (form.script_chunks ?? []).map((c, i) => {
+        if (i !== index) return c
+        const existing = regenerate ? [] : (c.image_urls ?? [])
+        const image_urls = [...existing, url]
+        return { ...c, image_urls, image_index: image_urls.length - 1 }
+      })
       onChange({ script_chunks: updated })
     } catch (e) {
       setError((e as Error).message)
@@ -220,7 +234,14 @@ export default function VideoGenerationSection({ form, onChange }: Props) {
     }
   }
 
-  async function handleGenerateCharacterImage(index: number) {
+  function handleChunkMediaIndexChange(chunkIndex: number, field: 'image_index' | 'video_index', value: number) {
+    const updated = (form.script_chunks ?? []).map((c, i) =>
+      i === chunkIndex ? { ...c, [field]: value } : c
+    )
+    onChange({ script_chunks: updated })
+  }
+
+  async function handleGenerateCharacterImage(index: number, regenerate = false) {
     const char = form.characters[index]
     if (!char?.description) return
     setError(null)
@@ -228,9 +249,12 @@ export default function VideoGenerationSection({ form, onChange }: Props) {
     try {
       const prompt = `${char.description}, ${getStylePrompt()}`
       const url = await generateImage(prompt, '1:1')
-      const updated = (form.characters ?? []).map((c, i) =>
-        i === index ? { ...c, image_url: url } : c
-      )
+      const updated = (form.characters ?? []).map((c, i) => {
+        if (i !== index) return c
+        const existing = regenerate ? [] : (c.image_urls ?? [])
+        const image_urls = [...existing, url]
+        return { ...c, image_urls, image_index: image_urls.length - 1 }
+      })
       onChange({ characters: updated })
     } catch (e) {
       setError((e as Error).message)
@@ -239,19 +263,26 @@ export default function VideoGenerationSection({ form, onChange }: Props) {
     }
   }
 
+  function handleCharMediaIndexChange(charIndex: number, value: number) {
+    const updated = (form.characters ?? []).map((c, i) =>
+      i === charIndex ? { ...c, image_index: value } : c
+    )
+    onChange({ characters: updated })
+  }
+
   async function handleGenerateAllChunkImages() {
     setError(null)
     setGenAllChunksImgLoading(true)
     const chunks = [...(form.script_chunks ?? [])]
     try {
       for (let i = 0; i < chunks.length; i++) {
-        if (!chunks[i].image_prompt || chunks[i].image_url) continue
+        if (!chunks[i].image_prompt || (chunks[i].image_urls?.length ?? 0) > 0) continue
         const prompt = `${chunks[i].image_prompt}, ${getStylePrompt()}`
         const refs = getChunkReferenceUrls(chunks[i])
         const url = refs.length > 0
           ? await generateImageWithReferences(prompt, refs, form.video_aspect, form.reference_strength ?? 0.4)
           : await generateImage(prompt, form.video_aspect)
-        chunks[i] = { ...chunks[i], image_url: url }
+        chunks[i] = { ...chunks[i], image_urls: [url], image_index: 0 }
         onChange({ script_chunks: [...chunks] })
       }
     } catch (e) {
@@ -283,6 +314,52 @@ export default function VideoGenerationSection({ form, onChange }: Props) {
     }
   }
 
+  async function handleGenerateChunkAudio(index: number) {
+    const chunk = form.script_chunks[index]
+    if (!chunk?.text) return
+    setChunkAudioLoading((prev) => ({ ...prev, [index]: true }))
+    try {
+      const result = await generateChunkAudio({
+        text: chunk.text,
+        voice_name: form.voice_name ?? '',
+        voice_rate: form.voice_rate,
+        voice_volume: form.voice_volume,
+      })
+      const updated = (form.script_chunks ?? []).map((c, i) =>
+        i === index ? { ...c, audio_url: result.audio_url, audio_duration: result.duration } : c
+      )
+      onChange({ script_chunks: updated })
+    } catch (e) {
+      setError((e as Error).message)
+    } finally {
+      setChunkAudioLoading((prev) => ({ ...prev, [index]: false }))
+    }
+  }
+
+  async function handleGenerateAllAudio() {
+    setGenAllAudioLoading(true)
+    const chunks = [...(form.script_chunks ?? [])]
+    for (let i = 0; i < chunks.length; i++) {
+      if (chunks[i].audio_url) continue
+      setChunkAudioLoading((prev) => ({ ...prev, [i]: true }))
+      try {
+        const result = await generateChunkAudio({
+          text: chunks[i].text,
+          voice_name: form.voice_name ?? '',
+          voice_rate: form.voice_rate,
+          voice_volume: form.voice_volume,
+        })
+        chunks[i] = { ...chunks[i], audio_url: result.audio_url, audio_duration: result.duration }
+        onChange({ script_chunks: [...chunks] })
+      } catch (e) {
+        setError((e as Error).message)
+      } finally {
+        setChunkAudioLoading((prev) => ({ ...prev, [i]: false }))
+      }
+    }
+    setGenAllAudioLoading(false)
+  }
+
   async function handleGenerateAllCharacterImages() {
     setError(null)
     setGenAllCharsImgLoading(true)
@@ -305,7 +382,7 @@ export default function VideoGenerationSection({ form, onChange }: Props) {
   const anyChunkImgLoading = Object.values(chunkImgLoading).some(Boolean)
   const anyCharImgLoading = Object.values(charImgLoading).some(Boolean)
   const pendingCharacterImages =
-    (form.characters ?? []).length > 0 && (form.characters ?? []).some((c) => !c.image_url)
+    (form.characters ?? []).length > 0 && (form.characters ?? []).some((c) => !c.image_urls?.length)
 
   return (
     <Card className="h-full flex flex-col gap-3">
@@ -393,26 +470,42 @@ export default function VideoGenerationSection({ form, onChange }: Props) {
                       value={char.description}
                       onChange={(e) => handleCharacterChange(index, 'description', e.target.value)}
                     />
-                    <Button
-                      variant="secondary"
-                      onClick={() => handleGenerateCharacterImage(index)}
-                      loading={charImgLoading[index]}
-                      disabled={!char.description || charImgLoading[index] || genAllCharsImgLoading}
-                      className="w-full mt-1"
-                    >
-                      {charImgLoading[index] ? 'Generating…' : char.image_url ? '🔄 Regenerate Image' : '🖼 Generate Image'}
-                    </Button>
+                    <div className="flex gap-1 mt-1">
+                      <Button
+                        variant="secondary"
+                        onClick={() => handleGenerateCharacterImage(index)}
+                        loading={charImgLoading[index]}
+                        disabled={!char.description || charImgLoading[index] || genAllCharsImgLoading}
+                        className="flex-1"
+                      >
+                        {charImgLoading[index] ? 'Generating…' : (char.image_urls?.length ?? 0) > 0 ? '🖼 Add Image' : '🖼 Generate Image'}
+                      </Button>
+                      {(char.image_urls?.length ?? 0) > 0 && (
+                        <Button
+                          variant="secondary"
+                          onClick={() => handleGenerateCharacterImage(index, true)}
+                          loading={charImgLoading[index]}
+                          disabled={charImgLoading[index] || genAllCharsImgLoading}
+                          className="px-2"
+                          title="Clear all and regenerate"
+                        >
+                          🔄
+                        </Button>
+                      )}
+                    </div>
                   </div>
 
                   {/* Right: thumbnail */}
                   <div className="flex-shrink-0 w-20 flex items-center justify-center">
-                    {char.image_url ? (
-                      <img
-                        src={char.image_url}
+                    {(char.image_urls?.length ?? 0) > 0 ? (
+                      <MediaCarousel
+                        type="image"
+                        urls={char.image_urls!}
+                        index={char.image_index ?? 0}
+                        onIndexChange={(i) => handleCharMediaIndexChange(index, i)}
+                        style={{ maxHeight: '150px', minHeight: '100px' }}
+                        onLightboxOpen={(src) => setLightbox({ src, alt: char.name })}
                         alt={char.name}
-                        className="w-20 h-full object-cover rounded cursor-pointer hover:opacity-80 transition-opacity"
-                        style={{ minHeight: '100px', maxHeight: '150px' }}
-                        onClick={() => setLightbox({ src: char.image_url!, alt: char.name })}
                       />
                     ) : (
                       <div className="w-20 rounded border border-dashed border-[#3a3a4a] flex items-center justify-center text-[#3a3a4a] text-xs text-center" style={{ minHeight: '100px' }}>
@@ -470,6 +563,15 @@ export default function VideoGenerationSection({ form, onChange }: Props) {
             >
               {genAllVideoPromptsLoading ? 'Generating All Video Prompts…' : '🎬 Generate All Video Prompts'}
             </Button>
+            <Button
+              variant="secondary"
+              onClick={handleGenerateAllAudio}
+              loading={genAllAudioLoading}
+              disabled={genAllAudioLoading || !form.voice_name || form.script_chunks.length === 0}
+              className="w-full"
+            >
+              {genAllAudioLoading ? 'Generating All Audio…' : '🔊 Generate All Audio'}
+            </Button>
 
             <div className="flex flex-col gap-2 overflow-y-auto" style={{ maxHeight: '60vh' }}>
               {form.script_chunks.map((chunk, index) => (
@@ -480,6 +582,25 @@ export default function VideoGenerationSection({ form, onChange }: Props) {
                   {/* Left: text + prompt + button */}
                   <div className="flex flex-col gap-1 flex-1 min-w-0">
                     <p className="text-xs text-[#a0a0b0]">{chunk.text}</p>
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <Button
+                        variant="secondary"
+                        onClick={() => handleGenerateChunkAudio(index)}
+                        loading={chunkAudioLoading[index]}
+                        disabled={chunkAudioLoading[index] || genAllAudioLoading}
+                        className="text-[10px] py-0.5 px-2 h-auto"
+                      >
+                        {chunkAudioLoading[index] ? 'Generating…' : chunk.audio_url ? '🔄 Regen Audio' : '🔊 Audio'}
+                      </Button>
+                      {chunk.audio_url && (
+                        <>
+                          <audio src={chunk.audio_url} controls className="h-6 max-w-[160px]" />
+                          <span className="text-[10px] text-[#a0a0b0] whitespace-nowrap">
+                            {chunk.audio_duration?.toFixed(1)}s
+                          </span>
+                        </>
+                      )}
+                    </div>
                     <div className="flex flex-wrap items-center gap-1">
                       {(chunk.character_names ?? []).map((name) => (
                         <span
@@ -515,15 +636,29 @@ export default function VideoGenerationSection({ form, onChange }: Props) {
                     </div>
                     <div className="flex items-center justify-between mt-1">
                       <p className="text-[10px] text-[#606070] uppercase tracking-wide">Image Prompt</p>
-                      <Button
-                        variant="secondary"
-                        onClick={() => handleGenerateChunkImage(index)}
-                        loading={chunkImgLoading[index]}
-                        disabled={!chunk.image_prompt || chunkImgLoading[index] || genAllChunksImgLoading || pendingCharacterImages}
-                        className="text-[10px] py-0.5 px-2 h-auto"
-                      >
-                        {chunkImgLoading[index] ? 'Generating…' : chunk.image_url ? '🔄 Regenerate Image' : '🖼 Generate Image'}
-                      </Button>
+                      <div className="flex gap-1">
+                        <Button
+                          variant="secondary"
+                          onClick={() => handleGenerateChunkImage(index)}
+                          loading={chunkImgLoading[index]}
+                          disabled={!chunk.image_prompt || chunkImgLoading[index] || genAllChunksImgLoading || pendingCharacterImages}
+                          className="text-[10px] py-0.5 px-2 h-auto"
+                        >
+                          {chunkImgLoading[index] ? 'Generating…' : (chunk.image_urls?.length ?? 0) > 0 ? '🖼 Add Image' : '🖼 Generate Image'}
+                        </Button>
+                        {(chunk.image_urls?.length ?? 0) > 0 && (
+                          <Button
+                            variant="secondary"
+                            onClick={() => handleGenerateChunkImage(index, true)}
+                            loading={chunkImgLoading[index]}
+                            disabled={chunkImgLoading[index] || genAllChunksImgLoading || pendingCharacterImages}
+                            className="text-[10px] py-0.5 px-2 h-auto"
+                            title="Clear all and regenerate"
+                          >
+                            🔄
+                          </Button>
+                        )}
+                      </div>
                     </div>
                     <Textarea
                       rows={3}
@@ -547,11 +682,23 @@ export default function VideoGenerationSection({ form, onChange }: Props) {
                           variant="secondary"
                           onClick={() => handleGenerateChunkVideo(index)}
                           loading={chunkVideoLoading[index]}
-                          disabled={!chunk.video_prompt || !chunk.image_url || chunkVideoLoading[index]}
+                          disabled={!chunk.video_prompt || !(chunk.image_urls?.length) || chunkVideoLoading[index]}
                           className="text-[10px] py-0.5 px-2 h-auto"
                         >
-                          {chunkVideoLoading[index] ? 'Generating…' : chunk.video_url ? '🔄 Regen Video' : '🎬 Generate Video'}
+                          {chunkVideoLoading[index] ? 'Generating…' : (chunk.video_urls?.length ?? 0) > 0 ? '🎬 Add Video' : '🎬 Generate Video'}
                         </Button>
+                        {(chunk.video_urls?.length ?? 0) > 0 && (
+                          <Button
+                            variant="secondary"
+                            onClick={() => handleGenerateChunkVideo(index, true)}
+                            loading={chunkVideoLoading[index]}
+                            disabled={!chunk.video_prompt || !(chunk.image_urls?.length) || chunkVideoLoading[index]}
+                            className="text-[10px] py-0.5 px-2 h-auto"
+                            title="Clear all and regenerate"
+                          >
+                            🔄
+                          </Button>
+                        )}
                       </div>
                     </div>
                     <Textarea
@@ -564,27 +711,30 @@ export default function VideoGenerationSection({ form, onChange }: Props) {
 
                   {/* Right: image + video stacked */}
                   <div className="flex-shrink-0 w-40 flex flex-col gap-2 items-center justify-start">
-                    {chunk.image_url ? (
-                      <img
-                        src={chunk.image_url}
-                        alt={`Chunk ${index + 1}`}
-                        className="w-full object-cover rounded cursor-pointer hover:opacity-80 transition-opacity"
+                    {(chunk.image_urls?.length ?? 0) > 0 ? (
+                      <MediaCarousel
+                        type="image"
+                        urls={chunk.image_urls!}
+                        index={chunk.image_index ?? 0}
+                        onIndexChange={(i) => handleChunkMediaIndexChange(index, 'image_index', i)}
                         style={{ maxHeight: '130px' }}
-                        onClick={() => setLightbox({ src: chunk.image_url!, alt: `Chunk ${index + 1}` })}
+                        onLightboxOpen={(src) => setLightbox({ src, alt: `Chunk ${index + 1}` })}
+                        alt={`Chunk ${index + 1}`}
                       />
                     ) : (
                       <div className="w-full rounded border border-dashed border-[#3a3a4a] flex items-center justify-center text-[#3a3a4a] text-xs text-center" style={{ minHeight: '90px' }}>
                         No image
                       </div>
                     )}
-                    {chunk.video_url ? (
-                      <video
-                        src={chunk.video_url}
-                        controls
-                        className="w-full rounded"
+                    {(chunk.video_urls?.length ?? 0) > 0 ? (
+                      <MediaCarousel
+                        type="video"
+                        urls={chunk.video_urls!}
+                        index={chunk.video_index ?? 0}
+                        onIndexChange={(i) => handleChunkMediaIndexChange(index, 'video_index', i)}
                         style={{ maxHeight: '130px' }}
                       />
-                    ) : chunk.image_url ? (
+                    ) : (chunk.image_urls?.length ?? 0) > 0 ? (
                       <div className="w-full rounded border border-dashed border-[#3a3a4a] flex items-center justify-center text-[#3a3a4a] text-xs text-center" style={{ minHeight: '60px' }}>
                         No video
                       </div>

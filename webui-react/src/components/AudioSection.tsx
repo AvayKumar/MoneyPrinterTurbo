@@ -1,43 +1,8 @@
 import { useEffect, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import type { FormState, TtsServer } from '@/types'
-import { getMusics } from '@/api/materials'
+import { getMusics, getVoices, previewVoice } from '@/api/materials'
 import { Card, CardHeader, FormRow, Select, Slider, Button } from './ui'
-
-// Voice lists per TTS server (subset of common voices)
-const TTS_VOICES: Record<TtsServer, { value: string; label: string }[]> = {
-  'custom-tts': [
-    { value: 'en-US-AndrewNeural', label: 'Andrew (en-US)' },
-    { value: 'en-US-AriaNeural', label: 'Aria (en-US)' },
-    { value: 'en-US-ChristopherNeural', label: 'Christopher (en-US)' },
-    { value: 'en-US-EricNeural', label: 'Eric (en-US)' },
-    { value: 'en-GB-RyanNeural', label: 'Ryan (en-GB)' },
-    { value: 'en-AU-WilliamNeural', label: 'William (en-AU)' },
-    { value: 'zh-CN-YunxiNeural', label: 'Yunxi (zh-CN)' },
-    { value: 'zh-CN-XiaoxiaoNeural', label: 'Xiaoxiao (zh-CN)' },
-    { value: 'ja-JP-KeitaNeural', label: 'Keita (ja-JP)' },
-    { value: 'ko-KR-InJoonNeural', label: 'InJoon (ko-KR)' },
-  ],
-  'azure-v1': [
-    { value: 'en-US-JennyNeural', label: 'Jenny (en-US)' },
-    { value: 'en-US-GuyNeural', label: 'Guy (en-US)' },
-    { value: 'zh-CN-XiaoxiaoNeural', label: 'Xiaoxiao (zh-CN)' },
-  ],
-  'azure-v2': [
-    { value: 'en-US-JennyNeural', label: 'Jenny (en-US)' },
-    { value: 'en-US-DavisNeural', label: 'Davis (en-US)' },
-    { value: 'zh-CN-XiaoyiNeural', label: 'Xiaoyi (zh-CN)' },
-  ],
-  siliconflow: [
-    { value: 'FishSpeech-1.5', label: 'FishSpeech 1.5' },
-    { value: 'CosyVoice2-0.5B', label: 'CosyVoice2 0.5B' },
-  ],
-  gemini: [
-    { value: 'en-US-Standard-A', label: 'Standard A (en-US)' },
-    { value: 'en-US-Standard-B', label: 'Standard B (en-US)' },
-    { value: 'en-US-Wavenet-D', label: 'WaveNet D (en-US)' },
-  ],
-}
 
 const TTS_SERVERS: { value: TtsServer; label: string }[] = [
   { value: 'custom-tts', label: 'Custom TTS (Edge TTS)' },
@@ -54,6 +19,7 @@ interface Props {
 
 export default function AudioSection({ form, onChange }: Props) {
   const [previewLoading, setPreviewLoading] = useState(false)
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null)
 
   const { data: musics = [] } = useQuery({
     queryKey: ['musics'],
@@ -62,22 +28,38 @@ export default function AudioSection({ form, onChange }: Props) {
     staleTime: 60_000,
   })
 
-  const voices = TTS_VOICES[form.tts_server] ?? TTS_VOICES['custom-tts']
+  const { data: voices = [], isLoading: voicesLoading } = useQuery({
+    queryKey: ['voices', form.tts_server],
+    queryFn: () => getVoices(form.tts_server),
+    staleTime: 60_000,
+  })
 
-  // Reset voice when TTS server changes
+  // Reset voice when TTS server changes (wait for voices to load)
   useEffect(() => {
-    const firstVoice = voices[0]?.value ?? ''
-    onChange({ voice_name: firstVoice })
+    if (voices.length > 0) {
+      onChange({ voice_name: voices[0].value })
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [form.tts_server])
+  }, [form.tts_server, voices])
 
   async function handlePreviewVoice() {
+    if (!form.voice_name) return
     setPreviewLoading(true)
-    // Preview uses the browser's built-in speech synthesis as a fallback
-    // The actual TTS preview would call the backend
+    if (previewUrl) {
+      URL.revokeObjectURL(previewUrl)
+      setPreviewUrl(null)
+    }
     try {
-      const utterance = new SpeechSynthesisUtterance('Hello, this is a voice preview.')
-      window.speechSynthesis.speak(utterance)
+      const previewText = form.video_subject?.trim() || form.video_script?.trim() || undefined
+      const blob = await previewVoice(
+        form.voice_name,
+        form.voice_rate ?? 1.0,
+        form.voice_volume ?? 1.0,
+        previewText,
+      )
+      setPreviewUrl(URL.createObjectURL(blob))
+    } catch (err) {
+      console.error('Voice preview failed:', err)
     } finally {
       setPreviewLoading(false)
     }
@@ -101,27 +83,39 @@ export default function AudioSection({ form, onChange }: Props) {
       </FormRow>
 
       <FormRow label="Voice">
-        <div className="flex gap-2">
-          <Select
-            value={form.voice_name ?? ''}
-            onChange={(e) => onChange({ voice_name: e.target.value })}
-            className="flex-1"
-          >
-            {voices.map((v) => (
-              <option key={v.value} value={v.value}>
-                {v.label}
-              </option>
-            ))}
-          </Select>
+        <Select
+          value={form.voice_name ?? ''}
+          onChange={(e) => onChange({ voice_name: e.target.value })}
+          disabled={voicesLoading}
+        >
+          {voicesLoading
+            ? <option>Loading…</option>
+            : voices.map((v) => (
+                <option key={v.value} value={v.value}>
+                  {v.label}
+                </option>
+              ))
+          }
+        </Select>
+      </FormRow>
+
+      <FormRow label="Preview">
+        <div className="flex flex-col gap-2 w-full">
           <Button
             variant="secondary"
             size="sm"
             onClick={handlePreviewVoice}
             loading={previewLoading}
-            title="Preview voice"
+            disabled={!form.voice_name || voicesLoading}
           >
-            ▶
+            {previewLoading ? 'Generating…' : 'Generate Preview'}
           </Button>
+          {previewUrl && (
+            // eslint-disable-next-line jsx-a11y/media-has-caption
+            <audio key={previewUrl} controls autoPlay className="w-full h-8">
+              <source src={previewUrl} type="audio/mpeg" />
+            </audio>
+          )}
         </div>
       </FormRow>
 
