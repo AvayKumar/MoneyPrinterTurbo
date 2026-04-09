@@ -28,6 +28,7 @@ export default function SessionSelector({
   onNewSession,
 }: Props) {
   const [open, setOpen] = useState(false)
+  const [confirmDelete, setConfirmDelete] = useState<SessionSummary | null>(null)
   const ref = useRef<HTMLDivElement>(null)
   const queryClient = useQueryClient()
 
@@ -50,12 +51,19 @@ export default function SessionSelector({
     return () => document.removeEventListener('mousedown', handleClickOutside)
   }, [])
 
-  async function handleDelete(e: React.MouseEvent, session: SessionSummary) {
+  function handleDeleteClick(e: React.MouseEvent, session: SessionSummary) {
     e.stopPropagation()
     if (sessions.length <= 1) return
+    setConfirmDelete(session)
+  }
+
+  async function handleDeleteConfirm() {
+    if (!confirmDelete) return
+    const session = confirmDelete
+    setConfirmDelete(null)
     await deleteSession(session.id)
     queryClient.invalidateQueries({ queryKey: ['sessions'] })
-    if (session.id === currentSessionId && sessions.length > 1) {
+    if (session.id === currentSessionId) {
       const next = sessions.find((s) => s.id !== session.id)
       if (next) onSessionChange(next.id)
     }
@@ -112,7 +120,7 @@ export default function SessionSelector({
               </div>
               {sessions.length > 1 && (
                 <button
-                  onClick={(e) => handleDelete(e, s)}
+                  onClick={(e) => handleDeleteClick(e, s)}
                   className="shrink-0 w-5 h-5 flex items-center justify-center rounded text-[#4a5568] hover:text-[#fc8181] hover:bg-[#2a1a1a] transition-colors"
                 >
                   x
@@ -120,6 +128,36 @@ export default function SessionSelector({
               )}
             </div>
           ))}
+        </div>
+      )}
+      {confirmDelete && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60"
+          onClick={() => setConfirmDelete(null)}
+        >
+          <div
+            className="bg-[#1a1f2e] border border-[#2a3044] rounded-lg p-5 w-80 shadow-2xl flex flex-col gap-4"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <p className="text-sm text-[#e2e8f0] font-semibold">Delete Session?</p>
+            <p className="text-xs text-[#9ba3bf]">
+              "{confirmDelete.name || 'Untitled Session'}" will be permanently deleted.
+            </p>
+            <div className="flex gap-2 justify-end">
+              <button
+                onClick={() => setConfirmDelete(null)}
+                className="text-xs px-4 py-1.5 rounded border border-[#2a3044] text-[#9ba3bf] hover:bg-[#252b3d] transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleDeleteConfirm}
+                className="text-xs px-4 py-1.5 rounded bg-[#c53030] text-white hover:bg-[#e53e3e] transition-colors"
+              >
+                Delete
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>

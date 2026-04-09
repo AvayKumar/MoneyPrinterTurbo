@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react'
+import JSZip from 'jszip'
 import type { Character, FormState, ScriptChunk } from '@/types'
 import { generateScriptChunks, generateCharacters, regenerateVideoPrompt } from '@/api/llm'
 import { generateImage, generateImageWithReferences, generateVideo } from '@/api/tti'
@@ -205,6 +206,7 @@ export default function VideoGenerationSection({ form, onChange }: Props) {
     () => (form.characters?.length ?? 0) > 0 || (form.script_chunks?.length ?? 0) > 0,
   )
   const [error, setError] = useState<string | null>(null)
+  const [downloading, setDownloading] = useState(false)
 
   // Derive charactersChecked when form data changes (e.g. session restore)
   useEffect(() => {
@@ -212,6 +214,56 @@ export default function VideoGenerationSection({ form, onChange }: Props) {
       setCharactersChecked(true)
     }
   }, [form.characters, form.script_chunks])
+
+  // Download is enabled when all chunks have a video AND narration audio exists
+  const allChunksHaveVideo =
+    (form.script_chunks?.length ?? 0) > 0 &&
+    (form.script_chunks ?? []).every((c) => (c.video_urls?.length ?? 0) > 0)
+  const downloadEnabled = allChunksHaveVideo && !!form.narration_audio_url
+
+  async function handleDownload() {
+    if (!downloadEnabled) return
+    setDownloading(true)
+    setError(null)
+    try {
+      const zip = new JSZip()
+      const subject = (form.video_subject?.trim() || 'project').replace(/[^a-z0-9]/gi, '_').toLowerCase()
+
+      // Add narration audio
+      const audioRes = await fetch(form.narration_audio_url!)
+      if (!audioRes.ok) throw new Error(`Failed to fetch narration audio: ${audioRes.status}`)
+      const audioBlob = await audioRes.blob()
+      const audioExt = form.narration_audio_url!.split('.').pop()?.split('?')[0] || 'mp3'
+      zip.file(`narration_audio.${audioExt}`, audioBlob)
+
+      // Add chunk videos (selected index, zero-padded sequence number)
+      const chunks = form.script_chunks ?? []
+      const pad = String(chunks.length).length
+      await Promise.all(
+        chunks.map(async (chunk, i) => {
+          const videoIndex = chunk.video_index ?? 0
+          const videoUrl = chunk.video_urls![videoIndex]
+          const videoRes = await fetch(videoUrl)
+          if (!videoRes.ok) throw new Error(`Failed to fetch video for chunk ${i + 1}: ${videoRes.status}`)
+          const videoBlob = await videoRes.blob()
+          const videoExt = videoUrl.split('.').pop()?.split('?')[0] || 'mp4'
+          const seq = String(i + 1).padStart(pad, '0')
+          zip.file(`chunk_${seq}.${videoExt}`, videoBlob)
+        }),
+      )
+
+      const zipBlob = await zip.generateAsync({ type: 'blob' })
+      const a = document.createElement('a')
+      a.href = URL.createObjectURL(zipBlob)
+      a.download = `${subject}_chunks.zip`
+      a.click()
+      URL.revokeObjectURL(a.href)
+    } catch (e) {
+      setError(`Download failed: ${(e as Error).message}`)
+    } finally {
+      setDownloading(false)
+    }
+  }
 
   function getStylePrompt(): string {
     return IMAGE_STYLES.find((s) => s.value === form.image_style)?.prompt ?? ''
@@ -741,6 +793,22 @@ export default function VideoGenerationSection({ form, onChange }: Props) {
               className="w-full"
             >
               {genAllAudioLoading ? 'Generating All Audio…' : '🔊 Generate All Audio'}
+            </Button>
+            <Button
+              variant={downloadEnabled ? 'primary' : 'secondary'}
+              onClick={handleDownload}
+              loading={downloading}
+              disabled={!downloadEnabled || downloading}
+              className="w-full"
+              title={
+                !allChunksHaveVideo
+                  ? 'Generate videos for all chunks first'
+                  : !form.narration_audio_url
+                  ? 'Generate narration audio first (in Script section)'
+                  : 'Download narration audio + chunk videos as ZIP'
+              }
+            >
+              {downloading ? '⏳ Zipping…' : '⬇ Download Chunks ZIP'}
             </Button>
 
             <div className="flex flex-col gap-2 overflow-y-auto" style={{ maxHeight: '60vh' }}>
