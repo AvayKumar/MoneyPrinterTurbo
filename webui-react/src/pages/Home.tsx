@@ -1,9 +1,15 @@
-import { useState } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
+import { useQueryClient } from '@tanstack/react-query'
 import type { FormState, LlmConfig } from '@/types'
 import { defaultFormState, defaultLlmConfig } from '@/types'
 import { unloadOllamaModel } from '@/api/llm'
 import { unloadTtiModel, unloadVideoModel } from '@/api/tti'
 import { unloadAudioModel } from '@/api/audio'
+import {
+  createSession,
+  getSession,
+  updateSession as apiUpdateSession,
+} from '@/api/sessions'
 import SettingsPanel from '@/components/SettingsPanel'
 import ScriptSection from '@/components/ScriptSection'
 import VideoGenerationSection from '@/components/VideoGenerationSection'
@@ -11,6 +17,9 @@ import VideoSection from '@/components/VideoSection'
 import AudioSection from '@/components/AudioSection'
 import SubtitleSection from '@/components/SubtitleSection'
 import GenerationPanel from '@/components/GenerationPanel'
+import SessionSelector from '@/components/SessionSelector'
+
+const SESSION_STORAGE_KEY = 'mpt_current_session_id'
 
 export default function Home() {
   const [form, setForm] = useState<FormState>(defaultFormState)
@@ -21,6 +30,164 @@ export default function Home() {
   const [unloadingTti, setUnloadingTti] = useState(false)
   const [unloadingVideo, setUnloadingVideo] = useState(false)
   const [unloadingAudio, setUnloadingAudio] = useState(false)
+
+  const [currentSessionId, setCurrentSessionId] = useState<string | null>(
+    () => localStorage.getItem(SESSION_STORAGE_KEY),
+  )
+  const isRestoringRef = useRef(false)
+  const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const latestStateRef = useRef({ form, llmConfig })
+  const queryClient = useQueryClient()
+
+  // Keep latestStateRef in sync for beforeunload flush
+  useEffect(() => {
+    latestStateRef.current = { form, llmConfig }
+  }, [form, llmConfig])
+
+  // --- Session init: restore existing or create new ---
+  useEffect(() => {
+    async function initSession() {
+      const storedId = localStorage.getItem(SESSION_STORAGE_KEY)
+      if (storedId) {
+        try {
+          const session = await getSession(storedId)
+          isRestoringRef.current = true
+          setLlmConfig(session.llm_config)
+          setForm({ ...defaultFormState, ...session.form_state })
+          setCurrentSessionId(storedId)
+          requestAnimationFrame(() => {
+            isRestoringRef.current = false
+          })
+          return
+        } catch {
+          // Session no longer exists, create a new one
+          localStorage.removeItem(SESSION_STORAGE_KEY)
+        }
+      }
+      // Create new session
+      const result = await createSession({
+        form_state: defaultFormState,
+        llm_config: defaultLlmConfig,
+      })
+      setCurrentSessionId(result.id)
+      localStorage.setItem(SESSION_STORAGE_KEY, result.id)
+      queryClient.invalidateQueries({ queryKey: ['sessions'] })
+    }
+    initSession()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  // --- Auto-save (debounced 1.5s) ---
+  useEffect(() => {
+    if (!currentSessionId || isRestoringRef.current) return
+
+    if (saveTimerRef.current) clearTimeout(saveTimerRef.current)
+    saveTimerRef.current = setTimeout(() => {
+      apiUpdateSession(currentSessionId, {
+        name: form.video_subject || 'Untitled Session',
+        form_state: form,
+        llm_config: llmConfig,
+      }).then(() => {
+        queryClient.invalidateQueries({ queryKey: ['sessions'] })
+      }).catch(() => {
+        // Silently fail — next save will retry
+      })
+    }, 1500)
+
+    return () => {
+      if (saveTimerRef.current) clearTimeout(saveTimerRef.current)
+    }
+  }, [form, llmConfig, currentSessionId, queryClient])
+
+  // --- Flush save on tab close ---
+  useEffect(() => {
+    function handleBeforeUnload() {
+      if (!currentSessionId) return
+      const { form: f, llmConfig: l } = latestStateRef.current
+      const body = JSON.stringify({
+        name: f.video_subject || 'Untitled Session',
+        form_state: f,
+        llm_config: l,
+      })
+      fetch(`/api/sessions/${currentSessionId}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body,
+        keepalive: true,
+      })
+    }
+    window.addEventListener('beforeunload', handleBeforeUnload)
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload)
+  }, [currentSessionId])
+
+  // --- Session switch ---
+  const handleSessionChange = useCallback(
+    async (sessionId: string) => {
+      if (sessionId === currentSessionId) return
+
+      // Flush pending save for current session
+      if (saveTimerRef.current) {
+        clearTimeout(saveTimerRef.current)
+        saveTimerRef.current = null
+      }
+      if (currentSessionId) {
+        const { form: f, llmConfig: l } = latestStateRef.current
+        apiUpdateSession(currentSessionId, {
+          name: f.video_subject || 'Untitled Session',
+          form_state: f,
+          llm_config: l,
+        }).catch(() => {})
+      }
+
+      // Restore the selected session
+      try {
+        const session = await getSession(sessionId)
+        isRestoringRef.current = true
+        setLlmConfig(session.llm_config)
+        setForm({ ...defaultFormState, ...session.form_state })
+        setCurrentSessionId(sessionId)
+        localStorage.setItem(SESSION_STORAGE_KEY, sessionId)
+        requestAnimationFrame(() => {
+          isRestoringRef.current = false
+        })
+      } catch {
+        // Session load failed
+      }
+    },
+    [currentSessionId],
+  )
+
+  // --- New session ---
+  const handleNewSession = useCallback(async () => {
+    // Flush current
+    if (saveTimerRef.current) {
+      clearTimeout(saveTimerRef.current)
+      saveTimerRef.current = null
+    }
+    if (currentSessionId) {
+      const { form: f, llmConfig: l } = latestStateRef.current
+      apiUpdateSession(currentSessionId, {
+        name: f.video_subject || 'Untitled Session',
+        form_state: f,
+        llm_config: l,
+      }).catch(() => {})
+    }
+
+    isRestoringRef.current = true
+    setForm(defaultFormState)
+    setLlmConfig(defaultLlmConfig)
+
+    const result = await createSession({
+      form_state: defaultFormState,
+      llm_config: defaultLlmConfig,
+    })
+    setCurrentSessionId(result.id)
+    localStorage.setItem(SESSION_STORAGE_KEY, result.id)
+    queryClient.invalidateQueries({ queryKey: ['sessions'] })
+    requestAnimationFrame(() => {
+      isRestoringRef.current = false
+    })
+  }, [currentSessionId, queryClient])
 
   async function handleUnloadModel() {
     setUnloadingModel(true)
@@ -67,14 +234,21 @@ export default function Home() {
       {/* Header */}
       <header className="border-b border-[#2a3044] bg-[#0a0d14] sticky top-0 z-10">
         <div className="max-w-[1600px] mx-auto px-4 py-3 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <span className="text-xl">🎬</span>
-            <div>
-              <h1 className="text-base font-bold text-[#e2e8f0] leading-none">
-                MoneyPrinterTurbo
-              </h1>
-              <p className="text-xs text-[#4a5568]">AI-powered short video generator</p>
+          <div className="flex items-center gap-4">
+            <div className="flex items-center gap-3">
+              <span className="text-xl">🎬</span>
+              <div>
+                <h1 className="text-base font-bold text-[#e2e8f0] leading-none">
+                  MoneyPrinterTurbo
+                </h1>
+                <p className="text-xs text-[#4a5568]">AI-powered short video generator</p>
+              </div>
             </div>
+            <SessionSelector
+              currentSessionId={currentSessionId}
+              onSessionChange={handleSessionChange}
+              onNewSession={handleNewSession}
+            />
           </div>
           <div className="flex items-center gap-4">
             {llmConfig.provider === 'ollama' && (

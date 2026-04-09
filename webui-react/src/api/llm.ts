@@ -6,6 +6,16 @@ export async function generateScript(data: VideoScriptRequest): Promise<string> 
   return res.data.data.video_script
 }
 
+export interface NarrationScriptRequest {
+  video_script: string
+  video_language?: string
+}
+
+export async function generateNarrationScript(data: NarrationScriptRequest): Promise<string> {
+  const res = await client.post<{ data: { narration_script: string } }>('/narration-script', data)
+  return res.data.data.narration_script
+}
+
 export async function generateTerms(data: VideoTermsRequest): Promise<string[]> {
   const res = await client.post<{ data: { video_terms: string[] } }>('/terms', data)
   return res.data.data.video_terms

@@ -7,7 +7,7 @@ interface MediaCarouselProps {
   type: 'image' | 'video'
   className?: string
   style?: React.CSSProperties
-  onLightboxOpen?: (url: string) => void
+  onLightboxOpen?: (urls: string[], index: number) => void
   alt?: string
 }
 
@@ -56,7 +56,7 @@ export default function MediaCarousel({
           alt={alt ?? ''}
           className={`w-full object-cover rounded cursor-pointer hover:opacity-80 transition-opacity ${className ?? ''}`}
           style={{ display: 'block', maxHeight: style?.maxHeight }}
-          onClick={() => onLightboxOpen?.(current)}
+          onClick={() => onLightboxOpen?.(urls, index)}
         />
       ) : (
         <video

@@ -34,10 +34,13 @@ export default function AudioSection({ form, onChange }: Props) {
     staleTime: 60_000,
   })
 
-  // Reset voice when TTS server changes (wait for voices to load)
+  // Reset voice when TTS server changes, but only if the current voice isn't in the list
   useEffect(() => {
     if (voices.length > 0) {
-      onChange({ voice_name: voices[0].value })
+      const currentVoiceExists = voices.some((v) => v.value === form.voice_name)
+      if (!currentVoiceExists) {
+        onChange({ voice_name: voices[0].value })
+      }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [form.tts_server, voices])

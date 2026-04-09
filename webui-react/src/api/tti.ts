@@ -28,6 +28,7 @@ export async function generateVideo(
   prompt: string,
   imageUrl: string,
   aspect = '9:16',
+  duration = 4.0,
 ): Promise<string> {
   const { width, height } = getDimensions(aspect)
 
@@ -40,7 +41,7 @@ export async function generateVideo(
   form.append('model', 'ltx2_22b_distilled_int8')
   form.append('width', String(width))
   form.append('height', String(height))
-  form.append('duration', '4.0')
+  form.append('duration', String(duration))
   form.append('fps', '24')
   form.append('num_inference_steps', '8')
   form.append('seed', String(Math.floor(Math.random() * 2147483647)))

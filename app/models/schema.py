@@ -190,6 +190,15 @@ class VideoTermsRequest(VideoTermsParams, BaseModel):
     pass
 
 
+class NarrationScriptRequest(BaseModel):
+    video_script: str
+    video_language: Optional[str] = ""
+
+
+class NarrationScriptResponse(BaseResponse):
+    pass
+
+
 ######################################################################################################
 ######################################################################################################
 ######################################################################################################
@@ -432,3 +441,15 @@ class VideoMaterialUploadResponse(BaseResponse):
                 },
             },
         }
+
+
+class SessionCreateRequest(BaseModel):
+    name: Optional[str] = None
+    form_state: dict = {}
+    llm_config: dict = {}
+
+
+class SessionUpdateRequest(BaseModel):
+    name: Optional[str] = None
+    form_state: Optional[dict] = None
+    llm_config: Optional[dict] = None

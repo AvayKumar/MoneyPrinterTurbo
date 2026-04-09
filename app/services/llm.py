@@ -403,6 +403,41 @@ Generate a script for a video, depending on the subject of the video.
     return final_script.strip()
 
 
+def generate_narration_script(video_script: str, language: str = "") -> str:
+    prompt = f"""
+# Role: Narration Script Writer
+
+## Goals:
+Rewrite the provided video script as a natural, conversational narration optimized for text-to-speech.
+
+## Constraints:
+1. Use clean text only — no markdown, no bullet points, no titles.
+2. Use punctuation (commas, ellipses, em-dashes) to create natural pacing and pauses.
+3. Write in short, punchy sentences. Break long sentences into shorter ones.
+4. Keep a warm, engaging, conversational tone — as if speaking directly to the listener.
+5. Do not add introductions, sign-offs, or any content not present in the original script.
+6. Preserve the meaning and all key information from the original script.
+7. Respond in the same language as the input script.
+{f'- language: {language}' if language else ''}
+
+# Input Script:
+{video_script}
+""".strip()
+
+    for i in range(_max_retries):
+        try:
+            response = _generate_response(prompt=prompt)
+            if response:
+                response = response.replace("*", "").replace("#", "")
+                response = re.sub(r"\[.*?\]", "", response)
+                logger.success(f"narration script completed")
+                return response.strip()
+        except Exception as e:
+            logger.error(f"failed to generate narration script: {e}")
+        logger.warning(f"retrying narration script... {i + 1}")
+    return ""
+
+
 def generate_terms(video_subject: str, video_script: str, amount: int = 5) -> List[str]:
     prompt = f"""
 # Role: Video Search Terms Generator
@@ -479,9 +514,11 @@ Characters in scene: {characters_in_scene}
 Your prompt must cover ALL of the following in order:
 1. Camera movement (pan, zoom, tilt, or static)
 2. For each character present: what they physically do and what they say or express based on `Script segment` (in sequence)
-3. Atmosphere, mood, background sounds and timing 
+3. Atmosphere, mood, background sounds and timing
 
 Note: Don't add voice over or clip duration in the response
+
+IMPORTANT: Always respond in English, regardless of the language of the script segment.
 
 Return ONLY 2-4 sentences describing the animation. No markdown, no bullet points, no explanation.
 Example: "Medium shot slowly zooms in. Alice steps forward and raises her hand, saying 'We have to go now.' Bob turns away silently, fists clenched. Rain begins to fall as the camera pulls back to reveal the empty street."
@@ -545,6 +582,8 @@ Rules:
 
 Script segment: "{chunk_text}"
 Full script context: "{video_script}"{style_suffix}
+
+IMPORTANT: Always respond in English, regardless of the language of the script segment.
 
 Return ONLY the image description as a single sentence or short phrase. No markdown, no explanation.
 """
@@ -662,7 +701,8 @@ Rules:
 1. Describe only "{name}" — one character only
 2. Cover: age, build, hair, eyes, clothing, expression, pose
 3. Start the description with: 'Full body character reference on white background: '
-4. Return ONLY the description as plain text, no markdown, no explanation
+4. IMPORTANT: Always respond in English, regardless of the language of the script
+5. Return ONLY the description as plain text, no markdown, no explanation
 """
         for i in range(_max_retries):
             try:

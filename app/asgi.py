@@ -12,6 +12,7 @@ from loguru import logger
 from app.config import config
 from app.models.exception import HttpException
 from app.router import root_api_router
+from app.services import session_db
 from app.utils import utils
 
 
@@ -80,3 +81,4 @@ def shutdown_event():
 @app.on_event("startup")
 def startup_event():
     logger.info("startup event")
+    session_db.init_db()

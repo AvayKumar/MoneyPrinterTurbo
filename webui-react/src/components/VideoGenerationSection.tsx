@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import type { Character, FormState, ScriptChunk } from '@/types'
 import { generateScriptChunks, generateCharacters, regenerateVideoPrompt } from '@/api/llm'
 import { generateImage, generateImageWithReferences, generateVideo } from '@/api/tti'
@@ -24,18 +24,160 @@ interface Props {
   onChange: (patch: Partial<FormState>) => void
 }
 
-function ImageLightbox({ src, alt, onClose }: { src: string; alt: string; onClose: () => void }) {
+function ImageLightbox({
+  urls,
+  index,
+  alt,
+  aspect,
+  stylePrompt,
+  onClose,
+  onIndexChange,
+  onAddImage,
+}: {
+  urls: string[]
+  index: number
+  alt: string
+  aspect: string
+  stylePrompt: string
+  onClose: () => void
+  onIndexChange: (i: number) => void
+  onAddImage: (url: string) => void
+}) {
+  const src = urls[index]
+  const hasMultiple = urls.length > 1
+  const [editMode, setEditMode] = useState(false)
+  const [editPrompt, setEditPrompt] = useState('')
+  const [editStrength, setEditStrength] = useState(0.7)
+  const [editLoading, setEditLoading] = useState(false)
+
+  // Reset edit mode when navigating to a different image
+  useEffect(() => {
+    setEditMode(false)
+    setEditPrompt('')
+  }, [index])
+
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      if (editMode) return  // don't navigate while editing
+      if (e.key === 'Escape') onClose()
+      if (e.key === 'ArrowLeft')  onIndexChange((index - 1 + urls.length) % urls.length)
+      if (e.key === 'ArrowRight') onIndexChange((index + 1) % urls.length)
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [index, urls.length, onClose, onIndexChange, editMode])
+
+  async function handleEditGenerate() {
+    if (!editPrompt.trim()) return
+    setEditLoading(true)
+    try {
+      const fullPrompt = stylePrompt ? `${editPrompt.trim()}, ${stylePrompt}` : editPrompt.trim()
+      const newUrl = await generateImageWithReferences(fullPrompt, [src], aspect, editStrength)
+      const newIndex = urls.length  // will be appended at this position
+      onAddImage(newUrl)
+      onIndexChange(newIndex)
+      setEditMode(false)
+      setEditPrompt('')
+    } finally {
+      setEditLoading(false)
+    }
+  }
+
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/80"
-      onClick={onClose}
+      onClick={editMode ? undefined : onClose}
     >
-      <img
-        src={src}
-        alt={alt}
-        className="max-w-[90vw] max-h-[90vh] rounded-lg shadow-2xl object-contain"
+      <div
+        className="relative flex flex-col items-center max-w-[90vw] max-h-[90vh]"
         onClick={(e) => e.stopPropagation()}
-      />
+      >
+        <img
+          src={src}
+          alt={alt}
+          className="rounded-lg shadow-2xl object-contain max-h-[75vh] max-w-full"
+        />
+
+        {/* Edit mode panel */}
+        {editMode && (
+          <div className="w-full mt-2 bg-[#0a0d14] border border-[#2a3044] rounded-lg p-3 flex flex-col gap-2">
+            <div className="flex items-center justify-between gap-2">
+              <p className="text-xs text-[#a0a0b0]">Editing reference: <span className="text-[#e2e8f0]">{alt}</span></p>
+              <div className="flex items-center gap-1.5 flex-shrink-0">
+                <label className="text-xs text-[#a0a0b0] whitespace-nowrap">Strength:</label>
+                <input
+                  type="number"
+                  min={0.1}
+                  max={1.0}
+                  step={0.05}
+                  value={editStrength}
+                  onChange={(e) => setEditStrength(Math.min(1, Math.max(0.1, parseFloat(e.target.value) || 0.7)))}
+                  className="w-14 text-xs bg-[#1a1a2e] border border-[#3a3a4a] text-[#e2e8f0] rounded px-2 py-0.5 focus:outline-none focus:border-[#5a6a8a]"
+                />
+              </div>
+            </div>
+            <textarea
+              autoFocus
+              rows={2}
+              className="w-full text-xs bg-[#1a1a2e] border border-[#3a3a4a] text-[#e2e8f0] rounded p-2 focus:outline-none focus:border-[#5a6a8a] resize-none"
+              placeholder="Describe the changes… (e.g. make it night time, add fog)"
+              value={editPrompt}
+              onChange={(e) => setEditPrompt(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) handleEditGenerate() }}
+            />
+            <div className="flex gap-2">
+              <button
+                onClick={handleEditGenerate}
+                disabled={!editPrompt.trim() || editLoading}
+                className="flex-1 text-xs px-3 py-1.5 rounded bg-[#3a5a8a] text-white hover:bg-[#4a6a9a] disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+              >
+                {editLoading ? '⏳ Generating…' : '✨ Generate Edit'}
+              </button>
+              <button
+                onClick={() => { setEditMode(false); setEditPrompt('') }}
+                disabled={editLoading}
+                className="text-xs px-3 py-1.5 rounded border border-[#3a3a4a] text-[#a0a0b0] hover:bg-[#1a1a2e] disabled:opacity-50 transition-colors"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Prev / Next — hidden in edit mode */}
+      {hasMultiple && !editMode && (
+        <>
+          <button
+            className="absolute left-4 top-1/2 -translate-y-1/2 bg-black/60 hover:bg-black/80 text-white rounded-full w-10 h-10 flex items-center justify-center text-xl transition-colors"
+            onClick={(e) => { e.stopPropagation(); onIndexChange((index - 1 + urls.length) % urls.length) }}
+          >
+            ‹
+          </button>
+          <button
+            className="absolute right-14 top-1/2 -translate-y-1/2 bg-black/60 hover:bg-black/80 text-white rounded-full w-10 h-10 flex items-center justify-center text-xl transition-colors"
+            onClick={(e) => { e.stopPropagation(); onIndexChange((index + 1) % urls.length) }}
+          >
+            ›
+          </button>
+          <div className="absolute bottom-4 left-1/2 -translate-x-1/2 bg-black/60 text-white text-xs px-2 py-1 rounded">
+            {index + 1} / {urls.length}
+          </div>
+        </>
+      )}
+
+      {/* Edit icon — top-left */}
+      {!editMode && (
+        <button
+          className="absolute top-4 left-4 bg-white rounded-full w-9 h-9 flex items-center justify-center text-base transition-all shadow hover:scale-110 hover:shadow-lg"
+          title="Edit image"
+          onClick={(e) => { e.stopPropagation(); setEditMode(true) }}
+        >
+          ✏️
+        </button>
+      )}
+
+      {/* Close — top-right */}
       <button
         className="absolute top-4 right-4 text-white text-2xl leading-none bg-black/50 rounded-full w-9 h-9 flex items-center justify-center hover:bg-black/80"
         onClick={onClose}
@@ -58,9 +200,18 @@ export default function VideoGenerationSection({ form, onChange }: Props) {
   const [genAllVideoPromptsLoading, setGenAllVideoPromptsLoading] = useState(false)
   const [genAllAudioLoading, setGenAllAudioLoading] = useState(false)
   const [genAllCharsImgLoading, setGenAllCharsImgLoading] = useState(false)
-  const [lightbox, setLightbox] = useState<{ src: string; alt: string } | null>(null)
-  const [charactersChecked, setCharactersChecked] = useState(false)
+  const [lightbox, setLightbox] = useState<{ urls: string[]; index: number; alt: string; aspect: string; stylePrompt: string; onAddImage: (url: string) => void } | null>(null)
+  const [charactersChecked, setCharactersChecked] = useState(
+    () => (form.characters?.length ?? 0) > 0 || (form.script_chunks?.length ?? 0) > 0,
+  )
   const [error, setError] = useState<string | null>(null)
+
+  // Derive charactersChecked when form data changes (e.g. session restore)
+  useEffect(() => {
+    if ((form.characters?.length ?? 0) > 0 || (form.script_chunks?.length ?? 0) > 0) {
+      setCharactersChecked(true)
+    }
+  }, [form.characters, form.script_chunks])
 
   function getStylePrompt(): string {
     return IMAGE_STYLES.find((s) => s.value === form.image_style)?.prompt ?? ''
@@ -152,7 +303,8 @@ export default function VideoGenerationSection({ form, onChange }: Props) {
     setError(null)
     setChunkVideoLoading((prev) => ({ ...prev, [index]: true }))
     try {
-      const url = await generateVideo(chunk.video_prompt, imageUrl, form.video_aspect)
+      const duration = chunk.audio_duration != null ? Math.ceil(chunk.audio_duration) + 1 : 4.0
+      const url = await generateVideo(chunk.video_prompt, imageUrl, form.video_aspect, duration)
       const updated = (form.script_chunks ?? []).map((c, i) => {
         if (i !== index) return c
         const existing = regenerate ? [] : (c.video_urls ?? [])
@@ -366,10 +518,10 @@ export default function VideoGenerationSection({ form, onChange }: Props) {
     const characters = [...(form.characters ?? [])]
     try {
       for (let i = 0; i < characters.length; i++) {
-        if (!characters[i].description || characters[i].image_url) continue
+        if (!characters[i].description || (characters[i].image_urls?.length ?? 0) > 0) continue
         const prompt = `${characters[i].description}, ${getStylePrompt()}`
         const url = await generateImage(prompt, '1:1')
-        characters[i] = { ...characters[i], image_url: url }
+        characters[i] = { ...characters[i], image_urls: [url], image_index: 0 }
         onChange({ characters: [...characters] })
       }
     } catch (e) {
@@ -389,7 +541,16 @@ export default function VideoGenerationSection({ form, onChange }: Props) {
       <CardHeader>🎬 Video Generation</CardHeader>
 
       {lightbox && (
-        <ImageLightbox src={lightbox.src} alt={lightbox.alt} onClose={() => setLightbox(null)} />
+        <ImageLightbox
+          urls={lightbox.urls}
+          index={lightbox.index}
+          alt={lightbox.alt}
+          aspect={lightbox.aspect}
+          stylePrompt={lightbox.stylePrompt}
+          onClose={() => setLightbox(null)}
+          onIndexChange={(i) => setLightbox((prev) => prev ? { ...prev, index: i } : null)}
+          onAddImage={lightbox.onAddImage}
+        />
       )}
 
       <FormRow label="Image Style" htmlFor="image-style">
@@ -407,7 +568,7 @@ export default function VideoGenerationSection({ form, onChange }: Props) {
       </FormRow>
 
       {/* Reference strength — only shown once characters have images */}
-      {(form.characters ?? []).some((c) => c.image_url) && (
+      {(form.characters ?? []).some((c) => c.image_urls?.length) && (
         <FormRow label={`Character Reference Strength: ${(form.reference_strength ?? 0.4).toFixed(2)}`} htmlFor="ref-strength">
           <input
             id="ref-strength"
@@ -504,7 +665,16 @@ export default function VideoGenerationSection({ form, onChange }: Props) {
                         index={char.image_index ?? 0}
                         onIndexChange={(i) => handleCharMediaIndexChange(index, i)}
                         style={{ maxHeight: '150px', minHeight: '100px' }}
-                        onLightboxOpen={(src) => setLightbox({ src, alt: char.name })}
+                        onLightboxOpen={(urls, i) => setLightbox({
+                          urls, index: i, alt: char.name, aspect: '1:1', stylePrompt: getStylePrompt(),
+                          onAddImage: (url) => {
+                            const charIdx = index
+                            const updated = (form.characters ?? []).map((c, ci) =>
+                              ci !== charIdx ? c : { ...c, image_urls: [...(c.image_urls ?? []), url], image_index: (c.image_urls ?? []).length }
+                            )
+                            onChange({ characters: updated })
+                          },
+                        })}
                         alt={char.name}
                       />
                     ) : (
@@ -682,8 +852,9 @@ export default function VideoGenerationSection({ form, onChange }: Props) {
                           variant="secondary"
                           onClick={() => handleGenerateChunkVideo(index)}
                           loading={chunkVideoLoading[index]}
-                          disabled={!chunk.video_prompt || !(chunk.image_urls?.length) || chunkVideoLoading[index]}
+                          disabled={!chunk.video_prompt || !(chunk.image_urls?.length) || !chunk.audio_url || chunkVideoLoading[index]}
                           className="text-[10px] py-0.5 px-2 h-auto"
+                          title={!chunk.audio_url ? 'Generate audio for this chunk first' : undefined}
                         >
                           {chunkVideoLoading[index] ? 'Generating…' : (chunk.video_urls?.length ?? 0) > 0 ? '🎬 Add Video' : '🎬 Generate Video'}
                         </Button>
@@ -692,7 +863,7 @@ export default function VideoGenerationSection({ form, onChange }: Props) {
                             variant="secondary"
                             onClick={() => handleGenerateChunkVideo(index, true)}
                             loading={chunkVideoLoading[index]}
-                            disabled={!chunk.video_prompt || !(chunk.image_urls?.length) || chunkVideoLoading[index]}
+                            disabled={!chunk.video_prompt || !(chunk.image_urls?.length) || !chunk.audio_url || chunkVideoLoading[index]}
                             className="text-[10px] py-0.5 px-2 h-auto"
                             title="Clear all and regenerate"
                           >
@@ -718,7 +889,16 @@ export default function VideoGenerationSection({ form, onChange }: Props) {
                         index={chunk.image_index ?? 0}
                         onIndexChange={(i) => handleChunkMediaIndexChange(index, 'image_index', i)}
                         style={{ maxHeight: '130px' }}
-                        onLightboxOpen={(src) => setLightbox({ src, alt: `Chunk ${index + 1}` })}
+                        onLightboxOpen={(urls, i) => setLightbox({
+                          urls, index: i, alt: `Chunk ${index + 1}`, aspect: form.video_aspect ?? '9:16', stylePrompt: getStylePrompt(),
+                          onAddImage: (url) => {
+                            const chunkIdx = index
+                            const updated = (form.script_chunks ?? []).map((c, ci) =>
+                              ci !== chunkIdx ? c : { ...c, image_urls: [...(c.image_urls ?? []), url], image_index: (c.image_urls ?? []).length }
+                            )
+                            onChange({ script_chunks: updated })
+                          },
+                        })}
                         alt={`Chunk ${index + 1}`}
                       />
                     ) : (

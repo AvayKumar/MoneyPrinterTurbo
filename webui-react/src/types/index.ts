@@ -153,6 +153,8 @@ export interface FontFile {
 
 export interface FormState extends TaskVideoRequest {
   // derived / UI-only
+  narration_script?: string
+  narration_audio_url?: string
   tts_server: TtsServer
   script_chunks: ScriptChunk[]
   image_style: string
@@ -185,6 +187,7 @@ export const defaultFormState: FormState = {
   font_size: 60,
   stroke_color: '#000000',
   stroke_width: 1.5,
+  narration_script: '',
   tts_server: 'custom-tts',
   script_chunks: [],
   image_style: 'realistic',

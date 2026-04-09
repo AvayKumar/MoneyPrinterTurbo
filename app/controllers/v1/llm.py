@@ -4,6 +4,8 @@ from app.controllers.v1.base import new_router
 from app.models.schema import (
     CharactersRequest,
     CharactersResponse,
+    NarrationScriptRequest,
+    NarrationScriptResponse,
     ScriptChunksRequest,
     ScriptChunksResponse,
     VideoPromptRequest,
@@ -49,6 +51,19 @@ def generate_video_terms(request: Request, body: VideoTermsRequest):
     )
     response = {"video_terms": video_terms}
     return utils.get_response(200, response)
+
+
+@router.post(
+    "/narration-script",
+    response_model=NarrationScriptResponse,
+    summary="Rewrite a video script as a natural TTS narration",
+)
+def generate_narration_script(request: Request, body: NarrationScriptRequest):
+    narration_script = llm.generate_narration_script(
+        video_script=body.video_script,
+        language=body.video_language or "",
+    )
+    return utils.get_response(200, {"narration_script": narration_script})
 
 
 @router.post(

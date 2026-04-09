@@ -17,6 +17,6 @@ export interface TtsChunkResult {
 }
 
 export async function generateChunkAudio(data: TtsChunkRequest): Promise<TtsChunkResult> {
-  const res = await client.post<{ data: TtsChunkResult }>('/tts-chunk', data)
+  const res = await client.post<{ data: TtsChunkResult }>('/tts-chunk', data, { timeout: 300_000 })
   return res.data.data
 }

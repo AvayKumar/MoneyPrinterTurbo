@@ -1,7 +1,8 @@
 import { useState } from 'react'
 import type { FormState } from '@/types'
 import { VIDEO_LANGUAGES } from '@/types'
-import { generateScript, generateTerms } from '@/api/llm'
+import { generateScript, generateTerms, generateNarrationScript } from '@/api/llm'
+import { generateChunkAudio } from '@/api/audio'
 import { Card, CardHeader, FormRow, Input, Textarea, Select, Button } from './ui'
 
 interface Props {
@@ -11,6 +12,8 @@ interface Props {
 
 export default function ScriptSection({ form, onChange }: Props) {
   const [genScriptLoading, setGenScriptLoading] = useState(false)
+  const [genNarrationLoading, setGenNarrationLoading] = useState(false)
+  const [genNarrationAudioLoading, setGenNarrationAudioLoading] = useState(false)
   const [genTermsLoading, setGenTermsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -31,6 +34,42 @@ export default function ScriptSection({ form, onChange }: Props) {
       setError((e as Error).message)
     } finally {
       setGenScriptLoading(false)
+    }
+  }
+
+  async function handleGenerateNarrationScript() {
+    if (!form.video_script?.trim()) return
+    setError(null)
+    setGenNarrationLoading(true)
+    try {
+      const script = await generateNarrationScript({
+        video_script: form.video_script,
+        video_language: form.video_language || undefined,
+      })
+      onChange({ narration_script: script })
+    } catch (e) {
+      setError((e as Error).message)
+    } finally {
+      setGenNarrationLoading(false)
+    }
+  }
+
+  async function handleGenerateNarrationAudio() {
+    if (!form.narration_script?.trim() || !form.voice_name) return
+    setError(null)
+    setGenNarrationAudioLoading(true)
+    try {
+      const result = await generateChunkAudio({
+        text: form.narration_script,
+        voice_name: form.voice_name,
+        voice_rate: form.voice_rate,
+        voice_volume: form.voice_volume,
+      })
+      onChange({ narration_audio_url: result.audio_url })
+    } catch (e) {
+      setError((e as Error).message)
+    } finally {
+      setGenNarrationAudioLoading(false)
     }
   }
 
@@ -99,6 +138,46 @@ export default function ScriptSection({ form, onChange }: Props) {
           onChange={(e) => onChange({ video_script: e.target.value })}
         />
       </FormRow>
+
+      {/* ── Narration Script ── */}
+      <div className="border-t border-[#2a3044] pt-3 flex flex-col gap-2">
+        <p className="text-xs font-semibold text-[#a0a0b0] uppercase tracking-wide">
+          🎙 Narration Script
+        </p>
+        <Button
+          variant="secondary"
+          onClick={handleGenerateNarrationScript}
+          loading={genNarrationLoading}
+          disabled={!form.video_script?.trim() || genNarrationLoading}
+          className="w-full"
+        >
+          {genNarrationLoading ? 'Generating Narration…' : '🎙 Generate Narration Script'}
+        </Button>
+        <Textarea
+          id="narration-script"
+          rows={6}
+          placeholder="A natural, TTS-ready narration will appear here…"
+          value={form.narration_script ?? ''}
+          onChange={(e) => onChange({ narration_script: e.target.value })}
+        />
+        <div className="flex items-center gap-3 flex-wrap">
+          <Button
+            variant="secondary"
+            onClick={handleGenerateNarrationAudio}
+            loading={genNarrationAudioLoading}
+            disabled={!form.narration_script?.trim() || !form.voice_name || genNarrationAudioLoading}
+            className="shrink-0"
+          >
+            {genNarrationAudioLoading ? 'Generating Audio…' : form.narration_audio_url ? '🔄 Regenerate Audio' : '🔊 Generate Audio'}
+          </Button>
+          {!form.voice_name && (
+            <span className="text-[10px] text-[#f6ad55]">Select a voice in Audio Settings first</span>
+          )}
+          {form.narration_audio_url && (
+            <audio src={form.narration_audio_url} controls className="flex-1 min-w-0 h-8" />
+          )}
+        </div>
+      </div>
 
       <Button
         variant="secondary"
